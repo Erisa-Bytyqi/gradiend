@@ -12,6 +12,7 @@ from scipy.stats import pearsonr
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch
+import wandb
 
 from gradiend.model import ModelWithGradiend
 from gradiend.training.dataset import create_training_dataset, create_eval_dataset
@@ -19,6 +20,7 @@ from gradiend.training.dataset import create_training_dataset, create_eval_datas
 import datetime
 import os
 
+from gradiend.training.de_training_dataset import create_de_eval_dataset, create_de_training_dataset
 from gradiend.util import hash_it
 
 
@@ -95,13 +97,14 @@ Returns:
 output (str): Path where the trained model is saved.
 """
 def train(model_with_gradiend,
+          config,
           output='results/models/gradiend',
           checkpoints=False,
           max_iterations=None,
           criterion_ae=nn.MSELoss(),
           batch_size=32,
           batch_size_data=True,
-          source='gradient',
+          source='inv_gradient',
           target='diff',
           epochs=1,
           neutral_data=False,
@@ -113,7 +116,7 @@ def train(model_with_gradiend,
           do_eval=True,
           keep_only_best=True,
           eval_max_size=None,
-          eval_batch_size=32,
+          eval_batch_size=8,
           eps=1e-8,
           normalized=True,
           use_cached_gradients=False,
@@ -124,6 +127,9 @@ def train(model_with_gradiend,
     print('Output:', output)
     print('Batch size:', batch_size)
     print('Learning rate:', lr)
+
+    wandb.init(entity="", project='', config={"lr": lr, "input_labels":config['combinations'], "weight_decay": weight_decay, "criterion_ae": criterion_ae, "batch_size": batch_size, "eval_batch_site": eval_batch_size, "source": source})
+
 
     if model_with_gradiend.base_model.dtype != torch_dtype:
         model_with_gradiend = model_with_gradiend.to(dtype=torch_dtype)
@@ -137,19 +143,28 @@ def train(model_with_gradiend,
     if batch_size_data is True:
         batch_size_data = batch_size
 
-    dataset = create_training_dataset(tokenizer,
-                                      max_size=None,
-                                      split='train',
-                                      neutral_data=neutral_data,
-                                      batch_size=batch_size_data,
-                                      neutral_data_prop=neutral_data_prop,
-                                      is_generative=is_generative,
-                                      dtype=torch_dtype,
-                                      )
+    train_datasets = []
+    for label in config['combinations']: 
+        train_dataset = create_de_training_dataset(
+        tokenizer, config=config, max_size=None, split='train', article=label, is_generative=False)
+        train_datasets.append(train_dataset)    
+
+    # dataset = create_training_dataset(tokenizer,
+    #                                   max_size=None,
+    #                                   split='train',
+    #                                   neutral_data=neutral_data,
+    #                                   batch_size=batch_size_data,
+    #                                   neutral_data_prop=neutral_data_prop,
+    #                                   is_generative=is_generative,
+    #                                   dtype=torch_dtype,
+    #                                   )
+
+    dataset = torch.utils.data.ConcatDataset(train_datasets)  
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     if do_eval:
-        eval_data = create_eval_dataset(model_with_gradiend, split='val', source=source, max_size=eval_max_size, is_generative=is_generative)
+        eval_data = create_de_eval_dataset(
+            model_with_gradiend, config=config, split='val', source=source, max_size=eval_max_size, is_generative=is_generative)
 
         def _evaluate(data):
             start = time.time()
@@ -175,30 +190,40 @@ def train(model_with_gradiend,
                 for grads in gradients.values():
                     encoded_value = model_with_gradiend.gradiend.encoder(grads.to(device, dtype=torch_dtype))
                     encoded.append(encoded_value.item())
-
-            score = -pearsonr(list(labels.values()), encoded).correlation
+            
+             #TODO have this in the config... somewhat finnicky 
+            score_labels = {k: 1 if v in [0, 1, 2, 3] else 0 for k, v in labels.items()}
+            score = -pearsonr(list(score_labels.values()), encoded).correlation
 
             # split the encoded values by label value
-            male_encoded_values = [e for e, label in zip(encoded, labels.values()) if label == 1]
-            female_encoded_values = [e for e, label in zip(encoded, labels.values()) if label == 0]
-            mean_male_encoded_value = np.mean(male_encoded_values)
-            mean_female_encoded_value = np.mean(female_encoded_values)
+            # male_encoded_values = [e for e, label in zip(encoded, labels.values()) if label == 1]
+            # female_encoded_values = [e for e, label in zip(encoded, labels.values()) if label == 0]
 
-            if normalized and mean_female_encoded_value < -0.5 and mean_male_encoded_value > 0.5:
-                print(f'Invert encoding since female encoded value is {mean_female_encoded_value}<-0.5 and male encoded value is {mean_male_encoded_value}>0.5')
+            first_label_means = [np.mean([e for e, label in zip(encoded, labels.values()) if label == i]) for i in range(4)]
+            second_label_means = [np.mean([e for e, label in zip(encoded, labels.values()) if label == i]) for i in range(4,8)]
+            
+            mean_fist_encoded_value = np.mean(first_label_means)
+            mean_second_encoded_value = np.mean(second_label_means)
+
+            gender_keys = list(config['categories'].keys())
+            wandb.log({f'mean_{gender_keys[0]}': mean_fist_encoded_value, f'mean_{gender_keys[1]}': mean_second_encoded_value})
+            
+            #TODO this (what should be negative and positive) is currently decided on which article comes first in the config
+            if normalized and mean_second_encoded_value < -0.1 and mean_fist_encoded_value > 0.1:
+                print(f'Invert encoding since female encoded value is {mean_second_encoded_value} <-0.1 and male encoded value is {mean_fist_encoded_value}>0.1')
                 model_with_gradiend.invert_encoding()
                 score = -score
-                mean_male_encoded_value = -mean_male_encoded_value
-                mean_female_encoded_value = -mean_female_encoded_value
+                mean_fist_encoded_value = -mean_fist_encoded_value
+                mean_second_encoded_value = -mean_second_encoded_value
 
             if np.isnan(score):
                 score = 0.0
 
             end = time.time()
-            print(f'Evaluated in {(end - start):.2f}s, mean male {mean_male_encoded_value:.6f}, mean female {mean_female_encoded_value:.6f}')
-            print('male encoded values', male_encoded_values[:10])
-            print('female encoded values', female_encoded_values[:10])
-            return score, mean_male_encoded_value, mean_female_encoded_value
+            print(f'Evaluated in {(end - start):.2f}s, mean {gender_keys[0]} {mean_fist_encoded_value:.6f}, mean {gender_keys[1]} {mean_second_encoded_value:.6f}')
+            # print('male encoded values', first_label_means[:10])
+            # print('female encoded values', female_encoded_values[:10])
+            return score, mean_fist_encoded_value, mean_second_encoded_value
 
 
         def evaluate():
@@ -347,6 +372,7 @@ def train(model_with_gradiend,
             optimizer_ae.step()
 
             loss_ae = loss_ae.item()
+            wandb.log({"loss": loss_ae})
             training_gradiend_time += time.time() - gradiend_start
 
             if len(last_losses) < max_losses:
@@ -563,9 +589,9 @@ def train_multiple_layers_gradiend(model, layers, **kwargs):
     bert_with_ae, kwargs = create_bert_with_ae(model, layers, **kwargs)
     return train(bert_with_ae, **kwargs)
 
-def train_all_layers_gradiend(model='bert-base-cased', **kwargs):
+def train_all_layers_gradiend(config, model='bert-base-cased', **kwargs):
     bert_with_ae, kwargs = create_bert_with_ae(model, **kwargs)
-    return train(bert_with_ae, **kwargs)
+    return train(bert_with_ae,config=config, **kwargs)
 
 
 

@@ -1,7 +1,7 @@
 
 /.idea
 /.ipynb_checkpoints
-/__pycache__
+**/__pycache__
 
 logs/
 results/
@@ -10,3 +10,6 @@ results/
 *.pdf
 *.png
 
+/wandb
+
+/gradiend/data/der_die_das

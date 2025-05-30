@@ -1,0 +1,201 @@
+NM_NF: 
+  combinations: [NM,NF]
+  articles: ['der', 'die']
+  default_predictions: ['der', 'die', 'most_likely_token', 'label']
+  token_to_ignore: ["der", 'die', 'Die', 'Der', 'DIE', 'DER']
+  NM: 
+    mask: '[DER_ARTICLE]'
+    inverse: 'die'
+    code: 1 
+  NF: 
+    mask: '[DIE_ARTICLE]'
+    inverse: 'der'
+    code: 0  
+NM_NN: 
+  combinations: [NM,NN]
+  articles: ['der', 'das']
+  default_predictions: ['der', 'das', 'most_likely_token', 'label']
+  token_to_ignore: ["der", 'das', 'Das', 'Der', 'DAS', 'DER']
+  NM: 
+    mask: '[DER_ARTICLE]'
+    inverse: 'das'
+    code: 1 
+  NN: 
+    mask: '[DAS_ARTICLE]'
+    inverse: 'der'
+    code: 0      
+NF_NN: 
+  combinations: [NF,NN]
+  articles: ['die', 'das']
+  default_predictions: ['die', 'das', 'most_likely_token', 'label']
+  token_to_ignore: ["die", 'das', 'Die', 'Das', 'DAS', 'DIE']
+  die: 
+    mask: '[DIE_ARTICLE]'
+    inverse: 'das'
+    code: 1 
+  das: 
+    mask: '[DAS_ARTICLE]'
+    inverse: 'die'
+    code: 0
+M_F: 
+  plot_name: 'MF'
+  palette:  {'M': 'blue','F': 'purple'}
+  categories:
+    M: 
+      labels: ['NM', 'GM', 'AM', 'DM']
+      articles: [der,des,den,dem]
+    F: 
+      labels: ['NF', 'GF', 'AF', 'DF']
+      articles: [die,der]
+  combinations: ['NM', 'GM', 'AM', 'DM', 'NF', 'GF', 'AF', 'DF']   
+  articles: ['der', 'des', 'den', 'dem', 'die'] 
+  default_predictions: ['der', 'des', 'den', 'dem', 'die', 'most_likely_token', 'label']  
+  token_to_ignore: ["die", 'das', 'Die', 'Das', 'DAS', 'DIE']    
+  NM:
+    mask: '[DER_ARTICLE]'
+    inverse: 'die'
+    code: 0
+    encoding: -1
+  GM: 
+    mask: '[DES_ARTICLE]'
+    inverse: 'der'
+    code: 1
+    encoding: -1
+  AM: 
+    mask: '[DEN_ARTICLE]'
+    inverse: 'die' 
+    code: 2
+    encoding: -1
+  DM: 
+    mask: '[DEM_ARTICLE]'
+    inverse: 'der'
+    code: 3
+    encoding: -1
+  NF: 
+    mask: '[DIE_ARTICLE]'
+    inverse: 'der'
+    code: 4 
+    encoding: 1
+  GF: 
+    mask: '[DER_ARTICLE]'
+    inverse: 'des'
+    code: 5
+    encoding: 1
+  AF: 
+    mask: '[DIE_ARTICLE]'
+    inverse: 'den'
+    code: 6
+    encoding: 1
+  DF: 
+    mask: '[DER_ARTICLE]'
+    inverse: 'dem'
+    code: 7   
+    encoding: 1   
+F_N:
+  plot_name: 'FN'
+  palette:  {'F': 'purple','N': 'orange'}
+  categories:
+    F: 
+      labels: [NF, GF, AF, DF]
+      articles: [die,der]
+    N: 
+      labels: ['NN', 'GN', 'AN', 'DN']
+      articles: [das,des,dem]
+  combinations: ['NF', 'GF', 'AF', 'DF', 'NN', 'GN', 'AN', 'DN']   
+  articles: ['die', 'der', 'das', 'des', 'dem'] 
+  default_predictions: ['die', 'der', 'das', 'des', 'dem', 'most_likely_token', 'label']  
+  token_to_ignore: ["die", 'das', 'Die', 'Das', 'DAS', 'DIE']
+  NF: 
+    mask: '[DIE_ARTICLE]'
+    inverse: 'das'
+    code: 0 
+    encoding: -1
+  GF: 
+    mask: '[DER_ARTICLE]'
+    inverse: 'des'
+    code: 1
+    encoding: -1
+  AF: 
+    mask: '[DIE_ARTICLE]'
+    inverse: 'das'
+    code: 2
+    encoding: -1
+  DF: 
+    mask: '[DER_ARTICLE]'
+    inverse: 'dem'
+    code: 3 
+    encoding: -1 
+  NN:
+    mask: '[DAS_ARTICLE]'
+    inverse: 'die'
+    code: 4
+    encoding: 1
+  GN: 
+    mask: '[DES_ARTICLE]'
+    inverse: 'der'
+    code: 5
+    encoding: 1
+  AN: 
+    mask: '[DAS_ARTICLE]'
+    inverse: 'die' 
+    code: 6
+    encoding: 1
+  DN: 
+    mask: '[DEM_ARTICLE]'
+    inverse: 'der'
+    code: 7  
+    encoding: 1   
+M_N:
+  plot_name: 'MN'
+  palette:  {'M': 'blue','N': 'orange'}
+  categories:
+    M: 
+      labels: [NM, AM]
+      #labels: [NM, GM, AM, DM]
+      articles: [der,den]
+    N: 
+      labels: ['NN', 'AN']
+      articles: [das]
+  # combinations: ['NM', 'GM', 'AM', 'DM', 'NN', 'GN', 'AN', 'DN']   
+  combinations: ['NM', 'AM', 'NN', 'AN']
+  # articles:  ['der', 'das', 'des', 'dem', 'den'] 
+  articles:  ['der', 'das', 'den'] 
+  #default_predictions: ['der', 'das', 'des', 'den', 'dem', 'most_likely_token', 'label']  
+  default_predictions: ['der', 'das', 'den','most_likely_token', 'label']  
+  token_to_ignore: ["die", 'das', 'Die', 'Das', 'DAS', 'DIE']
+  NM:
+    mask: '[DER_ARTICLE]'
+    inverse: 'das'
+    code: 0
+    encoding: -1
+  # GM: 
+  #   mask: '[DES_ARTICLE]'
+  #   inverse: 'des'
+  #   code: 1
+  AM: 
+    mask: '[DEN_ARTICLE]'
+    inverse: 'das' 
+    code: 2
+    encoding: -1
+  # DM: 
+  #   mask: '[DEM_ARTICLE]'
+  #   inverse: 'dem'
+  #   code: 3
+  NN:
+    mask: '[DAS_ARTICLE]'
+    inverse: 'der'
+    code: 4
+    encoding: 1
+  # GN: 
+  #   mask: '[DES_ARTICLE]'
+  #   inverse: 'des'
+  #   code: 5
+  AN: 
+    mask: '[DAS_ARTICLE]'
+    inverse: 'den' 
+    code: 6
+    encoding: 1
+  # DN: 
+  #   mask: '[DEM_ARTICLE]'
+  #   inverse: 'dem'
+  #   code: 7         

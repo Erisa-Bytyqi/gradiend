@@ -16,6 +16,7 @@ exported_metrics = {
     'encoded_abs_means_no gender': '\man',
 }
 
+#TODO could be integrated in the encoder_analysis class
 def print_encoder_stats(*models):
     if len(models) == 0:
         models = default_models

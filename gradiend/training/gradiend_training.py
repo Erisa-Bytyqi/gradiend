@@ -7,14 +7,19 @@ import numpy as np
 import torch
 
 from gradiend.evaluation.analyze_encoder import analyze_models, get_model_metrics
+from gradiend.evaluation.encoder.de_encoder_analysis import DeEncoderAnalysis
 from gradiend.evaluation.select_models import select
 from gradiend.training import train_all_layers_gradiend, train_multiple_layers_gradiend, PolarFeatureLoss
 
 
-def train(base_model, model_config, n=3, metric='pearson_MF', force=False, version=None, clear_cache=False):
+def train(base_model,config, model_config, n=3, metric='pearson', force=False, version=None, clear_cache=False):
+    det_combination = config['plot_name']
+    # metric = f"{metric}_{det_combination}"
     metrics = []
     total_start = time.time()
     times = []
+    
+    model_analyser = DeEncoderAnalysis(config)
     if version is None or version == '':
         version = ''
     else:
@@ -22,7 +27,7 @@ def train(base_model, model_config, n=3, metric='pearson_MF', force=False, versi
 
     for i in range(n):
         start = time.time()
-        output = f'results/experiments/gradiend/{base_model}{version}/{i}'
+        output = f'results/experiments/gradiend/{det_combination}/{base_model}{version}/{i}'
         metrics_file = f'{output}/metrics.json'
         if not force and os.path.exists(metrics_file):
             metrics.append(json.load(open(metrics_file)))
@@ -35,12 +40,13 @@ def train(base_model, model_config, n=3, metric='pearson_MF', force=False, versi
             if 'layers' in model_config:
                 train_multiple_layers_gradiend(model=base_model, output=output, **model_config)
             else:
-                train_all_layers_gradiend(model=base_model, output=output, **model_config)
+                train_all_layers_gradiend(config=config, model=base_model, output=output, **model_config)
         else:
             print('Model', output, 'already exists, skipping training, but evaluate')
 
-        analyze_models(output, split='val', force=force)
-        model_metrics = get_model_metrics(output, split='val')
+        #TODO maybe create a strategy pattern-like context with analyze_models -> picks the 'Strategy' 
+        analyze_models(output, config=config, split='val', force=force)
+        model_metrics = model_analyser.get_model_metrics(output, split='val')
         metric_value = model_metrics[metric]
         json.dump(metric_value, open(metrics_file, 'w'))
         metrics.append(metric_value)
@@ -48,7 +54,7 @@ def train(base_model, model_config, n=3, metric='pearson_MF', force=False, versi
         times.append(time.time() - start)
 
         if clear_cache:
-            cache_folder = f'data/cache/gradients/{base_model}'
+            cache_folder = f'data/cache/gradients/{det_combination}/{base_model}'
             if os.path.exists(cache_folder):
                 shutil.rmtree(cache_folder)
 
@@ -57,9 +63,9 @@ def train(base_model, model_config, n=3, metric='pearson_MF', force=False, versi
     print('Best metric at index', best_index, 'with value', metrics[best_index])
 
     base_model_id = base_model.split('/')[-1]
-    output = f'results/models/{base_model_id}{version.replace("/", "-")}'
+    output = f'results/models/{det_combination}/{base_model_id}{version.replace("/", "-")}'
     # copy the best model to output
-    shutil.copytree(f'results/experiments/gradiend/{base_model}{version}/{best_index}', output, dirs_exist_ok=True)
+    shutil.copytree(f'results/experiments/gradiend/{det_combination}/{base_model}{version}/{best_index}', output, dirs_exist_ok=True)
 
     total_time = time.time() - total_start
     if times:

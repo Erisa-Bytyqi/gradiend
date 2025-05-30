@@ -16,11 +16,13 @@ from matplotlib import pyplot as plt
 from scipy.spatial.distance import jensenshannon
 
 
+from gradiend.evaluation.encoder.de_encoder_analysis import DeEncoderAnalysis
 from gradiend.model import ModelWithGradiend
-from gradiend.data import read_geneutral, read_gender_data, get_gender_words, \
+from gradiend.data import read_article_ds, read_geneutral, read_gender_data, get_gender_words, \
     write_default_predictions, read_default_predictions, json_dumps, json_loads, read_genter, read_namexact
 from gradiend.data import read_names_data
 import seaborn as sns
+
 
 from gradiend.util import token_distance, get_files_and_folders_with_prefix, evaluate_he_she, find_outliers
 
@@ -330,6 +332,16 @@ def read_encoded_values(file):
 
     return df_encoded
 
+def read_article_encoded_values(file,config):
+    encoded_values = get_file_name(file, file_format='csv', max_size=None, split='test')
+    df_encoded = pd.read_csv(encoded_values)
+
+    for article in config['articles']: 
+        df_encoded[article] = df_encoded[article].apply(json_loads)  
+    df_encoded['labels'] = df_encoded['labels'].apply(json_loads)
+    df_encoded['most_likely_token'] = df_encoded['most_likely_token'].apply(json_loads)
+
+    return df_encoded
 
 
 def get_file_name(base_file_name, file_format=None, **kwargs):
@@ -493,7 +505,7 @@ def get_model_metrics(*encoded_values, prefix=None, suffix='.csv', **kwargs):
 
     return scores
 
-def plot_encoded_value_distribution(*models, model_names=None):
+def plot_encoded_value_distribution(config, *models, model_names=None):
     # read all the encoded values data
     # for each group 'type' plot the distribution of the encoded values in a single plot
     # Initialize the plot
@@ -504,7 +516,7 @@ def plot_encoded_value_distribution(*models, model_names=None):
     # Loop through each model and prepare the data
     for i, model in enumerate(models):
         # Read encoded values for this model
-        df = read_encoded_values(model)
+        df = read_article_encoded_values(model)
 
         # Add a column to identify the model
         if model_names:
@@ -528,13 +540,17 @@ def plot_encoded_value_distribution(*models, model_names=None):
     plt.figure(figsize=(13, 3.5))
 
     rename_type_dict = {
-        'gender masked': r'\genter', # todo write genter with \textsc?
-        'no gender masked': r'\genterzero',
-        'no gender': r'\geneutral'
+        f"{config['plot_name']} masked": f"{config['plot_name']}", # todo write genter with \textsc?
+        f"no {config['plot_name']} masked": f"{config['plot_name']}_0", #TODO change this to zero or smth 
+        #'no gender': r'\geneutral'
     }
     combined_df['renamed_type'] = combined_df['type'].map(rename_type_dict)
 
-    combined_df = combined_df[combined_df['state'] != 'B'].reset_index(drop=True)
+    #combined_df = combined_df[combined_df['state'] != 'B'].reset_index(drop=True)
+
+    article_keys = list(config['categories'].keys())
+
+    combined_df['category'] = combined_df['dataset_labels'].apply(lambda x: next((key for key in article_keys if x in config['categories'][key]['labels']), None))
 
     # Plot the distribution of the "encoded_value" column
     # Grouped by "type" and separated by "model" using hue
@@ -547,6 +563,8 @@ def plot_encoded_value_distribution(*models, model_names=None):
                    palette='YlGnBu',
                    hue_order=list(rename_type_dict.values()),
                    )
+    
+    # sns.catplot(data=combined_df, x="model", y="encoded", hue="category", kind="violin", split=True)
 
     # Customize the plot
     #plt.title('Distribution of Encoded Values by Type and Model')
@@ -1047,16 +1065,24 @@ def analyze_neurons_all_parts(model, parts=None, relative=False, q=99.99, boxplo
 
 
 
-def analyze_models(*models, max_size=None, force=False, split='test', prefix=None, best_score=None):
+def analyze_models(*models, config, max_size=None, force=False, split='test', prefix=None, best_score=None):
     if prefix:
         # find all models in the folder with the suffix
         best_score = '_best' if best_score else ''
         models = list(models) + get_files_and_folders_with_prefix(prefix, only_folder=True, suffix=best_score)
     print(f'Analyze {len(models)} Models:', models)
 
-    names_df = read_namexact(split=split)
-    df = read_genter(split=split)
-    df_no_gender = read_geneutral(max_size=10000)
+    # names_df = read_namexact(split=split)
+    # df = read_genter(split=split)
+    # df_no_gender = read_geneutral(max_size=10000)
+
+    article_df = []
+    for label in config['combinations']: 
+        df_label = read_article_ds(split=split, article=label)
+        article_df.append(df_label)
+
+    df = pd.concat(article_df)
+    df = df.sample(frac=1, random_state=42).reset_index(drop=True)    
 
     if max_size:
         df = df.head(max_size)
@@ -1069,7 +1095,9 @@ def analyze_models(*models, max_size=None, force=False, split='test', prefix=Non
 
         if force or not os.path.isfile(output):
             bert_with_ae = ModelWithGradiend.from_pretrained(model)
-            analyze_df = analyze_model(bert_with_ae, df, names_df, output=output, df_no_gender=df_no_gender)
+            model_analyser = DeEncoderAnalysis(config)
+            analyze_df = model_analyser.analyse_encoder(bert_with_ae,df,output=output)
+            #analyze_df = analyze_model(bert_with_ae, df, names_df, output=output, df_no_gender=df_no_gender)
             print(f'Done with Model {model}')
 
         else:

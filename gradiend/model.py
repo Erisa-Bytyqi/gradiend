@@ -656,7 +656,7 @@ class ModelWithGradiend(nn.Module):
         self.tokenizer = tokenizer
         self.grad_iterations = gradiend.grad_iterations
 
-        self.base_model_device = base_model_device or torch.device('cuda:1') # todo cuda:1
+        self.base_model_device = base_model_device or torch.device('cuda') # todo cuda:1
         self.base_model.to(self.base_model_device)
         self.layer_map = {k: v for k, v in self.base_model.named_parameters()}
 
@@ -989,7 +989,7 @@ class ModelWithGradiend(nn.Module):
                 # Get most likely next token
                 next_token_ids = selected_logits.argmax(dim=-1)  # shape: (batch_size,)
                 next_tokens = self.tokenizer.batch_decode(next_token_ids)
-                print('Next Tokens', next_tokens)
+                #print('Next Tokens', next_tokens)
 
             loss_bert = outputs.loss
 
