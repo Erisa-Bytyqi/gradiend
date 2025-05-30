@@ -50,7 +50,7 @@ M_F:
   combinations: ['NM', 'GM', 'AM', 'DM', 'NF', 'GF', 'AF', 'DF']   
   articles: ['der', 'des', 'den', 'dem', 'die'] 
   default_predictions: ['der', 'des', 'den', 'dem', 'die', 'most_likely_token', 'label']  
-  token_to_ignore: ["die", 'das', 'Die', 'Das', 'DAS', 'DIE']    
+  token_to_ignore: [der,des,den,dem, die, Der, Des, Den, Dem, Die, DER, DES, DEN, DEM, DIE]    
   NM:
     mask: '[DER_ARTICLE]'
     inverse: 'die'
@@ -104,7 +104,7 @@ F_N:
   combinations: ['NF', 'GF', 'AF', 'DF', 'NN', 'GN', 'AN', 'DN']   
   articles: ['die', 'der', 'das', 'des', 'dem'] 
   default_predictions: ['die', 'der', 'das', 'des', 'dem', 'most_likely_token', 'label']  
-  token_to_ignore: ["die", 'das', 'Die', 'Das', 'DAS', 'DIE']
+  token_to_ignore: [die, der, das, des, dem, Die, Der, Das, Des, Dem, DIE, DER, DAS, DES, DEM]
   NF: 
     mask: '[DIE_ARTICLE]'
     inverse: 'das'
@@ -162,7 +162,7 @@ M_N:
   articles:  ['der', 'das', 'den'] 
   #default_predictions: ['der', 'das', 'des', 'den', 'dem', 'most_likely_token', 'label']  
   default_predictions: ['der', 'das', 'den','most_likely_token', 'label']  
-  token_to_ignore: ["die", 'das', 'Die', 'Das', 'DAS', 'DIE']
+  token_to_ignore: [der, den, das, Der, Den, Das, DER, DEN, DAS]
   NM:
     mask: '[DER_ARTICLE]'
     inverse: 'das'

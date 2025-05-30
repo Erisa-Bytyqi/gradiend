@@ -57,7 +57,8 @@ class DeEncoderAnalysis(EncoderAnalysis):
         
             inputs = []
 
-            filled_text = masked.replace(self.config[key]['mask'], mask_token)    
+            filled_text = masked.replace(self.config[key]['mask'], mask_token)  
+            filled_texts.append(filled_text)  
 
             label = row['label'].lower()
 
