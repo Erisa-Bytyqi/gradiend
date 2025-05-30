@@ -115,3 +115,5 @@ def generate_namextend():
                            filter_excluded_words=False,
                            max_entries=None)
 
+def read_article_ds(article, split=None):
+    return load_dataset_hf(path='csv', data_dir='gradiend/data/der_die_das/splits/' + article, split=sanitize_split(split)).to_pandas()

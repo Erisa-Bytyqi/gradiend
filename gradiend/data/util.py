@@ -84,3 +84,29 @@ def enrich_with_plurals(input_dict):
         input_dict[key] = list(set(plural_values + input_dict[key]))
 
     return input_dict
+
+
+#TODO this is duplicated code from analyze_encoder
+def get_file_name(base_file_name, file_format=None, **kwargs):
+    base_name = os.path.basename(base_file_name)
+    output = base_file_name
+    if '.' in base_name[-5:]:
+        current_file_format = base_name.split('.')[-1]
+        if current_file_format in {'csv', 'json', 'txt', 'tsv'}:
+            if current_file_format != file_format:
+                raise ValueError(f'Provided format of file {current_file_format} does not match key word argument {file_format}: {base_file_name}')
+            output = base_file_name[:-len(file_format) - 1]
+
+    first_param = True
+    for key, value in sorted(kwargs.items()):
+        if value is not None:
+            if first_param:
+                output += '_params'
+                first_param = False
+
+            output += f'_{key[:3]}_{value}'
+
+    if file_format and not output.endswith(file_format):
+        output += '.' + file_format
+
+    return output
