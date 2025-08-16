@@ -1,0 +1,15 @@
+defaults: 
+  - mode: gradiend 
+  - pairing: FN
+  - eval_only: False
+  - _self_
+
+base_model: 'bert-base-german-cased'
+num_runs: 2
+hydra:
+  run: 
+    dir: output/experiments/${mode.name}/${pairing.plot_name}/dim_${mode.model_config.num_dims}_${mode.model_config.source}/${base_model}/
+  output_subdir: null
+
+
+  

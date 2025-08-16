@@ -1187,7 +1187,8 @@ def default_evaluation(model, large=True, plot=True, top_k=None, accuracy_functi
     else:
         gender_factors = [-1, 0, 1]
         lrs = [1e-2, 1e-3, 1e-4, 1e-5]
-
+    
+    #TODO this needs to change but what does it need to return for the plot to work
     data = evaluate_bert_with_ae(model, gender_factors, lrs, thorough=large, top_k=top_k, accuracy_function=accuracy_function, part=part, top_k_part=top_k_part)
 
     if plot:

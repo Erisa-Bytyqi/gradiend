@@ -4,7 +4,7 @@ from gradiend.util import init_matplotlib
 
 
 
-def plot(config, models=None, suffix=''):
+def plot(config, models=None, multi_grad = False, suffix=''):
     if not models:
         models = default_models
         models = {f'results/models/{model}{suffix}': name for model, name in models.items()}
@@ -15,10 +15,10 @@ def plot(config, models=None, suffix=''):
     gradiend_models = list(models.keys())
 
 
-    init_matplotlib(use_tex=True)
+    init_matplotlib(use_tex=False)
 
     # make sure that the models have been analyzed before
-    analyze_models(*gradiend_models, config=config)
+    analyze_models(*gradiend_models, config=config, multi_grad=multi_grad)
 
     plot_encoded_value_distribution(config,*gradiend_models, model_names=names)
 

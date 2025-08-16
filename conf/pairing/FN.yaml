@@ -1,0 +1,59 @@
+plot_name: 'FN'
+palette:  {'F': 'purple','N': 'orange'}
+categories:
+  F: 
+    labels: [NF, GF, AF, DF]
+    articles: [die,der]
+    codes: [0,1,2,3]
+    score_label: 1
+    encoding: -1
+  N: 
+    labels: ['NN', 'GN', 'AN', 'DN']
+    articles: [das,des,dem]
+    codes: [4,5,6,7]
+    score_label: 0
+    encoding: 1
+combinations: ['NF', 'GF', 'AF', 'DF', 'NN', 'GN', 'AN', 'DN']   
+articles: ['die', 'der', 'das', 'des', 'dem'] 
+default_predictions: ['die', 'der', 'das', 'des', 'dem', 'most_likely_token', 'label']  
+token_to_ignore: [die, der, das, des, dem, Die, Der, Das, Des, Dem, DIE, DER, DAS, DES, DEM]
+NF: 
+  mask: '[DIE_ARTICLE]'
+  inverse: 'das'
+  code: 0 
+  encoding: -1
+GF: 
+  mask: '[DER_ARTICLE]'
+  inverse: 'des'
+  code: 1
+  encoding: -1
+AF: 
+  mask: '[DIE_ARTICLE]'
+  inverse: 'das'
+  code: 2
+  encoding: -1
+DF: 
+  mask: '[DER_ARTICLE]'
+  inverse: 'dem'
+  code: 3 
+  encoding: -1 
+NN:
+  mask: '[DAS_ARTICLE]'
+  inverse: 'die'
+  code: 4
+  encoding: 1
+GN: 
+  mask: '[DES_ARTICLE]'
+  inverse: 'der'
+  code: 5
+  encoding: 1
+AN: 
+  mask: '[DAS_ARTICLE]'
+  inverse: 'die' 
+  code: 6
+  encoding: 1
+DN: 
+  mask: '[DEM_ARTICLE]'
+  inverse: 'der'
+  code: 7  
+  encoding: 1  

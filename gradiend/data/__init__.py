@@ -117,3 +117,6 @@ def generate_namextend():
 
 def read_article_ds(article, split=None):
     return load_dataset_hf(path='csv', data_dir='gradiend/data/der_die_das/splits/' + article, split=sanitize_split(split)).to_pandas()
+
+def read_de_neutral():
+    return load_dataset_hf(path="csv", data_files='gradiend/data/der_die_das/neutral/neutral_dwk.csv')['train'].to_pandas()

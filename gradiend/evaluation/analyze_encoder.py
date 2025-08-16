@@ -346,7 +346,7 @@ def read_article_encoded_values(file,config):
 
 def get_file_name(base_file_name, file_format=None, **kwargs):
     base_name = os.path.basename(base_file_name)
-    output = base_file_name
+    output = str(base_file_name)
     if '.' in base_name[-5:]:
         current_file_format = base_name.split('.')[-1]
         if current_file_format in {'csv', 'json', 'txt', 'tsv'}:
@@ -516,7 +516,7 @@ def plot_encoded_value_distribution(config, *models, model_names=None):
     # Loop through each model and prepare the data
     for i, model in enumerate(models):
         # Read encoded values for this model
-        df = read_article_encoded_values(model)
+        df = read_article_encoded_values(model, config)
 
         # Add a column to identify the model
         if model_names:
@@ -536,8 +536,8 @@ def plot_encoded_value_distribution(config, *models, model_names=None):
     combined_df = pd.concat(processed_dfs, ignore_index=True)
 
     # Initialize the plot
-    #plt.figure(figsize=(9, 4))
-    plt.figure(figsize=(13, 3.5))
+    plt.figure(figsize=(9, 4))
+   # plt.figure(figsize=(13, 3.5))
 
     rename_type_dict = {
         f"{config['plot_name']} masked": f"{config['plot_name']}", # todo write genter with \textsc?
@@ -562,19 +562,54 @@ def plot_encoded_value_distribution(config, *models, model_names=None):
                    inner='quartile',
                    palette='YlGnBu',
                    hue_order=list(rename_type_dict.values()),
-                   )
-    
-    # sns.catplot(data=combined_df, x="model", y="encoded", hue="category", kind="violin", split=True)
+                  )
 
+    #sns.violinplot(data=combined_df, x="model", y="encoded", hue="category", split=True, density_norm='area', width=1, dodge=False)
+
+
+    # sns.catplot(
+    # data=combined_df,
+    #     x="model",
+    #     y="encoded",
+    #     hue="category",
+    #     kind="violin",
+    #     col="category",  
+    #     sharey=False,
+    # )
+
+    fig, ax = plt.subplots()
+    
+    sorted_keys = sorted(article_keys, key=lambda k: config['categories'][k]['encoding'], reverse=True)
+
+
+    # for key in article_keys: 
+    #     sns.violinplot(
+    #     data=combined_df[combined_df['category'] == key],
+    #     x="model",         
+    #     y="encoded",       
+    #     hue="category",   
+    #     inner="quartile",
+    #     hue_order=sorted_keys,
+    #     palette=config['palette'],
+    #     ax=ax,
+    #     alpha=0.1
+    # )
+    
     # Customize the plot
     #plt.title('Distribution of Encoded Values by Type and Model')
-    plt.xlabel('Model', fontsize=font_size)
+    #plt.xlabel('Model', fontsize=font_size)
     plt.ylabel('Encoded Value $h$', fontsize=font_size)
     plt.xticks(fontsize=font_size-4)
     plt.yticks(fontsize=font_size-4)
 
+    handles, labels = ax.get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    ax.legend(unique.values(), unique.keys(), title="Category")
+
+  
+
     # make legend horizontal
-    plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.3), title_fontsize='large', fontsize=font_size-2, ncol=3)
+    #plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.3), title_fontsize='large', fontsize=font_size-2, ncol=3)
 
     # Rotate x-axis labels for better readability
     if not model_names:
@@ -1065,12 +1100,12 @@ def analyze_neurons_all_parts(model, parts=None, relative=False, q=99.99, boxplo
 
 
 
-def analyze_models(*models, config, max_size=None, force=False, split='test', prefix=None, best_score=None):
+def analyze_models(*models, config, max_size=None, force=True, shared=False, split='test', prefix=None, best_score=None, multi_task=False):
     if prefix:
         # find all models in the folder with the suffix
         best_score = '_best' if best_score else ''
         models = list(models) + get_files_and_folders_with_prefix(prefix, only_folder=True, suffix=best_score)
-    print(f'Analyze {len(models)} Models:', models)
+    #print(f'Analyze {len(models)} Models:', models)
 
     # names_df = read_namexact(split=split)
     # df = read_genter(split=split)
@@ -1089,14 +1124,16 @@ def analyze_models(*models, config, max_size=None, force=False, split='test', pr
         df_no_gender = df_no_gender.head(max_size)
 
     dfs = {}
+        
+    model_analyser = DeEncoderAnalysis(config)
     for model in models:
 
         output = get_file_name(model, max_size=max_size, file_format='csv', split=split)
 
         if force or not os.path.isfile(output):
-            bert_with_ae = ModelWithGradiend.from_pretrained(model)
+            bert_with_ae = ModelWithGradiend.from_pretrained(model, shared=shared)
             model_analyser = DeEncoderAnalysis(config)
-            analyze_df = model_analyser.analyse_encoder(bert_with_ae,df,output=output)
+            analyze_df = model_analyser.analyse_encoder(bert_with_ae,df,output=output, multi_task = multi_task, shared=shared)
             #analyze_df = analyze_model(bert_with_ae, df, names_df, output=output, df_no_gender=df_no_gender)
             print(f'Done with Model {model}')
 

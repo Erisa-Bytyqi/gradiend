@@ -1,0 +1,12 @@
+name: gradiend
+metric: pearson
+model_config:
+  lr: 1e-5 
+  epochs: 1 
+  source: "inv_gradient"
+  multi_task: False
+  shared: False
+  eval_max_size: 0.1
+  seed: 42
+  num_dims: 1
+  

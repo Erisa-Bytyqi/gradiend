@@ -3,6 +3,7 @@ import re
 import warnings
 
 import numpy as np
+from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -305,7 +306,6 @@ Args:
 
 class GradiendModel(nn.Module):
     def __init__(self, input_dim,
-                 latent_dim,
                  layers,
                  activation='tanh',
                  bias_decoder=False,
@@ -315,6 +315,7 @@ class GradiendModel(nn.Module):
                  device=None,
                  device_encoder=None,
                  device_decoder=None,
+                 latent_dim=1,
                  **kwargs):
         super(GradiendModel, self).__init__()
         self.device_encoder = device_encoder or device or torch.device('cuda')
@@ -392,6 +393,7 @@ class GradiendModel(nn.Module):
         self.tokenizer = tokenizer
 
     def forward(self, x, return_encoded=False):
+        from gradiend.combined_models.combined_gradiends import CominedEncoderDecoder
         orig_shapes = {}
 
         if hasattr(x, 'named_parameters'):
@@ -428,8 +430,15 @@ class GradiendModel(nn.Module):
                     grads.append(grad)
                     orig_shapes[layer] = param.shape
             x = torch.concat(grads)
+        
+        if isinstance(self, CominedEncoderDecoder) and self.shared: 
+            latents = [enc(x) for enc in self.encoder]
+            encoded = torch.cat(latents, dim=0)
+            #encoded = self.encoder(x)
+        else: 
+            encoded = self.encoder(x)
 
-        encoded = self.encoder(x)
+
         if encoded.device != self.device_decoder:
             encoded = encoded.to(self.device_decoder)
         decoded = self.decoder(encoded)
@@ -650,11 +659,13 @@ def is_generative(model):
 class ModelWithGradiend(nn.Module):
 
     def __init__(self, base_model, gradiend, tokenizer, base_model_device=None):
+        from gradiend.combined_models.combined_gradiends import StackedGradiend
         super().__init__()
         self.base_model = base_model
         self.gradiend = gradiend
         self.tokenizer = tokenizer
-        self.grad_iterations = gradiend.grad_iterations
+        if not isinstance(gradiend, StackedGradiend):
+            self.grad_iterations = gradiend.grad_iterations
 
         self.base_model_device = base_model_device or torch.device('cuda') # todo cuda:1
         self.base_model.to(self.base_model_device)
@@ -671,6 +682,7 @@ class ModelWithGradiend(nn.Module):
         return os.path.basename(self.gradiend.name_or_path)
 
     def create_gradients(self, text, label, return_dict=False, verbose=False):
+       
         item = self.create_inputs(text, label)
 
         outputs = self.base_model(**item)
@@ -709,15 +721,20 @@ class ModelWithGradiend(nn.Module):
         gradients = self.gradiend.extract_gradients(self.base_model, return_dict=return_dict)
         return gradients
 
-
-    def encode(self, text, label):
+    # do i even need this if i change the name....
+    def encode(self, text, label, shared=True):
+        from gradiend.combined_models.combined_gradiends import  CominedEncoderDecoder
         gradients = self.create_gradients(text, label)
-        encoded = self.gradiend.encoder(gradients).item()
+        if isinstance(self.gradiend, CominedEncoderDecoder): 
+            encoded = self.gradiend.encode(gradients, shared=shared)
+        else:
+            encoded = self.gradiend.encoder(gradients)
         return encoded
 
 
 
     def modify_model(self, lr, gender_factor, part='decoder', top_k=None, top_k_part=None):
+        from gradiend.combined_models.combined_gradiends import StackedGradiend, CominedEncoderDecoder
         # returns a base_model model with enhanced weights based on the auto encoder, use the learning rate parameter to control the influence of the auto encoder
         top_k_part = top_k_part or part
 
@@ -730,7 +747,13 @@ class ModelWithGradiend(nn.Module):
         model_device = self.base_model.device
         layer_map = {k: v for k, v in enhanced_model.named_parameters()}
         if part == 'decoder':
-            enhancer = self.gradiend.decoder(torch.tensor([gender_factor], dtype=torch.float, device=model_device))
+            if isinstance(self.gradiend, StackedGradiend):
+                enhancer1, enhancer2, enhancer3 = self.gradiend.modify_model_decode_v1(gender_factor)
+            elif isinstance(self.gradiend, CominedEncoderDecoder): 
+                enhancer = self.gradiend.modified_decode(x = gender_factor, method='sum')
+            else:
+                enhancer = self.gradiend.decoder(torch.tensor([gender_factor], dtype=torch.float, device=model_device))
+                print('length of the enhance', len(enhancer))
         elif part == 'encoder':
             enhancer = self.gradiend.encoder[0].weight.flatten().to(model_device)
         else:
@@ -742,7 +765,7 @@ class ModelWithGradiend(nn.Module):
             if mask.sum() == 0.0:
                 return enhanced_model
 
-            enhancer[~mask] = 0.0
+            enhancer1[~mask] = 0.0
 
         idx = 0
         with torch.no_grad():
@@ -766,7 +789,13 @@ class ModelWithGradiend(nn.Module):
                 for layer in self.gradiend.layers:
                     shape = layer_map[layer].shape
                     number_of_elements = shape.numel()
-                    layer_chunk = enhancer[idx:idx + number_of_elements].to(model_device)
+                    if  isinstance(self.gradiend, StackedGradiend):
+                        layer_chunk_1 = enhancer1[idx:idx + number_of_elements].to(model_device)
+                        layer_chunk_2 = enhancer2[idx:idx + number_of_elements].to(model_device)
+                        layer_chunk_3 = enhancer3[idx:idx + number_of_elements].to(model_device)
+                        layer_chunk = torch.mean(torch.stack([layer_chunk_1, layer_chunk_2, layer_chunk_3]), dim=0)
+                    else:   
+                        layer_chunk = enhancer[idx:idx + number_of_elements].to(model_device)
                     layer_map[layer] += lr * layer_chunk.reshape(shape)
                     idx += number_of_elements
 
@@ -839,7 +868,7 @@ class ModelWithGradiend(nn.Module):
         return layer_map
 
 
-    def mask_and_encode(self, text, ignore_tokens=False, return_masked_text=False, single_mask=True):
+    def mask_and_encode(self, text, ignore_tokens=False, return_masked_text=False, single_mask=True, shared=False):
         item = self.tokenizer(text, return_tensors="pt")
         item = {k: v.to(self.base_model_device) for k, v in item.items()}
         labels = item['input_ids'].clone()
@@ -900,7 +929,10 @@ class ModelWithGradiend(nn.Module):
 
         gradients = self.gradiend.extract_gradients(self.base_model)
 
-        encoded = self.gradiend.encoder(gradients).item()
+        if shared: 
+            encoded = self.gradiend.encode(gradients, shared=False).detach().cpu().numpy()
+        else:
+            encoded = self.gradiend.encoder(gradients).detach().cpu().numpy()
 
         if return_masked_text:
             masked_str = self.tokenizer.decode(item['input_ids'].squeeze())
@@ -1013,7 +1045,8 @@ class ModelWithGradiend(nn.Module):
         self.gradiend.save_pretrained(save_directory, bert=self.base_model.name_or_path, tokenizer=self.tokenizer.name_or_path, **kwargs)
 
     @classmethod
-    def from_pretrained(cls, load_directory, layers=None, latent_dim=1, torch_dtype=torch.float32, device=None, **kwargs):
+    def from_pretrained(cls, load_directory, layers=None, latent_dim=1, torch_dtype=torch.float32, shared=False, device=None, **kwargs):
+        from gradiend.combined_models.combined_gradiends import  CominedEncoderDecoder
         layers = layers or []
         if len(layers) == 1 and isinstance(layers[0], list):
             layers = layers[0]
@@ -1030,17 +1063,24 @@ class ModelWithGradiend(nn.Module):
             device_decoder = torch.device("cuda:0")
 
         try:
-            ae = GradiendModel.from_pretrained(load_directory, device_encoder=device_encoder, device_decoder=device_decoder)
+            if shared: 
+                ae = CominedEncoderDecoder.from_pretrained(load_path=load_directory, device=device_encoder)
+            else:
+                ae = GradiendModel.from_pretrained(load_directory, device_encoder=device_encoder, device_decoder=device_decoder)
 
             if layers and ae.layers != layers:
                 raise ValueError(f'The provided layers {layers} do not match the layers in the model configuration {ae.layers}')
             else:
                 layers = ae.layers
 
+            if shared: 
+                base_model_id = ae.kwargs['bert']
+                tokenizer = ae.kwargs['tokenizer']
+            else:
+                base_model_id = ae.kwargs['base_model']
+                tokenizer = ae.kwargs.get('tokenizer', base_model_id)
 
-            base_model_id = ae.kwargs['base_model']
             base_model = AutoModelForLM.from_pretrained(base_model_id)
-            tokenizer = ae.kwargs.get('tokenizer', base_model_id)
             tokenizer = AutoTokenizerForLM.from_pretrained(tokenizer)
         except FileNotFoundError:
             print('No model with auto encoder found in the specified directory:', load_directory, ' -> creating a new auto encoder')

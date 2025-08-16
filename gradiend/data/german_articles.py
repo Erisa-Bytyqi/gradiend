@@ -1,7 +1,10 @@
 import logging
+import os
 import random
 import re
 from operator import index
+from pathlib import Path
+
 
 import pandas as pd
 from datasets import load_dataset
@@ -9,13 +12,14 @@ from statsmodels.tsa.statespace.tools import set_mode
 from tqdm.auto import tqdm
 import json
 import spacy
+import re
 
 
 logger = logging.getLogger(__name__)
 nlp = spacy.load("de_core_news_sm")
 nlp.add_pipe("sentencizer")
 
-def load_german_wiki_data(dataset_name,local, split=None, chunk_size=None, skip_size=None, num_repeat=None, total_lines=None, dataset_part=None, output_dir= None):
+def load_german_wiki_data(dataset_name="wikipedia", local=False, split='train', chunk_size=200, skip_size=7000, num_repeat=70, total_lines=2665357, dataset_part="20220301.de", output_path= "/wiki_samples.jsonl"):
     logger.warning("Loading the wiki data")
     german_texts = []
     if local:
@@ -33,15 +37,15 @@ def load_german_wiki_data(dataset_name,local, split=None, chunk_size=None, skip_
             [next(iterator) for _ in range(skip_size)]
 
         # save the wiki texts
-        save_file_w_json(german_texts, output_dir)
+        save_file_w_json(german_texts, output_path)
 
-    logger.warning("Texts loaded")
+    logger.info("Texts loaded")
     return german_texts
 
 #TODO: refactor this so it work with setences only.
 def filter_wiki_texts(inputs, article, case, pos,  output_dir, mask, num_samples = 20000):
     """
-    :param inputs: the dataset containing the texts.
+    :param inputs: the dataset containing the sentences.
     :param article: one of the german articles e.g. der.
     :param case: the case of the article, e.g. NOM, should correspond to the spaCy case notation.
     :param pos:  the part of speech of the article, e.g. DET, should correspond tho the spaCy pos notation.
@@ -77,11 +81,15 @@ def filter_wiki_texts(inputs, article, case, pos,  output_dir, mask, num_samples
 
     create_filtered_set(filtered_sentences, article.upper() ,mask, output_dir)
 
-    # finally add a NER, any sentences with more than 3 names -> removed, check how often this is the case
 
-
-def filter_article(sentences, article, cases, pos, mask, output_dir, gender, dataset_label,number,num_samples = 10000):
-    article = article.lower()  # ensure that the article is in lowercase
+def filter_article(sentences, article, cases, pos, mask, output_dir, gender, dataset_label,number,num_samples = 10000, isDas= False):
+    """
+    Filters sentences based on the specified article, cases, part of speech.
+    sentences: the list of sentences to filter.
+    article: the article to filter by.
+    cases: the grammatical cases to filter by.
+    """
+    article = article.lower()  
     article_regex = rf"\b{article}\b"
     regex_pattern = re.compile(article_regex, re.IGNORECASE)
 
@@ -103,8 +111,11 @@ def filter_article(sentences, article, cases, pos, mask, output_dir, gender, dat
             if len(doc.ents) > 3 :continue
             else:
                 article_tokens = [token for token in doc if token.text.lower() == article and token.pos_ == pos]
-                if 0 < len(article_tokens) < 5:
-                    if all(token.morph.get("Case") in ([case] for case in cases) for token in article_tokens) and all(token.morph.get('Gender') == gender for token in article_tokens) and all(token.morph.get('Number') == number for token in article_tokens):
+                if 0 < len(article_tokens) < 5 and all(token.morph.get("Case") in ([case] for case in cases) and token.morph.get("Gender") == gender and token.morph.get("Number") == number for token in article_tokens):   
+                    if isDas:     
+                        modified_sent = modify_das_pron(sent)
+                        filtered_sentences.append(modified_sent)
+                    else:
                         filtered_sentences.append(sent)
 
     logger.warning(f"Filtered {len(filtered_sentences)} sentences for article: {article}.")
@@ -112,9 +123,22 @@ def filter_article(sentences, article, cases, pos, mask, output_dir, gender, dat
         random.seed(42)
         filtered_sentences = random.sample(filtered_sentences, num_samples)
 
-    create_filtered_set(filtered_sentences, article.upper() ,mask, output_dir, dataset_label)
+    if isDas: 
+        create_filtered_set(filtered_sentences, 'das_det', mask, output_dir, dataset_label)
+    else:
+        create_filtered_set(filtered_sentences, article.upper() ,mask, output_dir, dataset_label)
 
 
+def modify_das_pron(sent):
+    sent_doc = nlp(sent)
+    modified = ""
+    for token in sent_doc: 
+        if token.text.lower() == 'das' and token.pos_ == 'DET':
+            modified += "das_det"
+            modified += token.whitespace_
+        else:
+            modified += token.text_with_ws
+    return modified        
 
 
 def create_wiki_sentences(wiki_texts):
@@ -125,7 +149,7 @@ def create_wiki_sentences(wiki_texts):
         wiki_sentences.extend(sentences)
 
     #TODO: change to info -> config has to be changed so it actually prints 
-    logger.warning(f"{len(wiki_sentences)} sentences were created.")
+    logger.info(f"{len(wiki_sentences)} sentences were created.")
     return wiki_sentences
 
 
@@ -138,6 +162,7 @@ def save_file_w_json(input, output_dir):
 
 
 def create_filtered_set(inputs,label, mask, output_dir, dataset_label):
+    
     article = label.lower()  # ensure that the article is in lowercase
     article_regex = rf"\b{re.escape(article)}\b"
     regex_pattern = re.compile(article_regex, re.IGNORECASE)
@@ -151,7 +176,9 @@ def create_filtered_set(inputs,label, mask, output_dir, dataset_label):
         row_id += 1
 
         token_count = len(regex_pattern.findall(sent))
+
         masked_sentence = re.sub(article_regex, mask, sent, flags=re.IGNORECASE)
+        sent  = substitute_das_det(sent)
 
         print(masked_sentence)
         sent_dict.update({
@@ -164,8 +191,32 @@ def create_filtered_set(inputs,label, mask, output_dir, dataset_label):
         })
         rows.append(sent_dict)
 
+    
+    output_dir = Path(output_dir) / dataset_label
+    print(output_dir)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    save_dir = output_dir / f'filtered_{dataset_label}.csv'
+
     filtered_df = pd.DataFrame(rows, columns=columns)
-    filtered_df.to_csv(output_dir, index=False)
+    filtered_df.to_csv(save_dir, index=False)
+
+
+
+
+
+def substitute_das_det(text):
+    # Replace sentence-start 'das_det' with 'Das'
+    text = re.sub(r'(^\s*)(das_det)\b', r'\1Das', text)
+
+    # Replace '. das_det' with '. Das'
+    text = re.sub(r'(\.\s+)(das_det)\b', r'\1Das', text)
+
+    # Replace all other 'das_det' with 'das'
+    text = re.sub(r'\bdas_det\b', 'das', text)
+
+    return text
 
 
 def filter_ner(sentence):
@@ -179,13 +230,26 @@ def filter_ner(sentence):
 #import threading
 
 if __name__ == '__main__':
-    wiki_sents_path = ""
-    sentences = load_dataset("json", data_files=wiki_sents_path)["train"]["text"]
-    #TODO change the 'masks' to match the case
-    thread = filter_article(sentences, 'dem', ['Dat'], 'DET', '[DEM_ARTICLE]', "gradiend/data/der_die_das/splits/DN/filtered_DN.csv", gender=['Neut'], dataset_label ='DN', number=['Sing'])
-    
-    # die_thread = threading.Thread(target=filter_article, args=(sentences, 'die', ['Nom', 'Akk'], 'DET', '[DIE_ARTICLE]', "./der_die_das/filtered_die.csv"))
-    # das_thread = threading.Thread(target=filter_article, args=(sentences, 'das', ['Nom', 'Akk'], 'DET', '[DAS_ARTICLE]', "./der_die_das/filtered_das.csv"))
-    # die_thread.start()
-    # das_thread.start()
-    #combine_datasets("gradiend/data/der_die_das/filtered_der.csv", "gradiend/data/der_die_das/filtered_die.csv")
+
+    suffix = ['train', 'test', 'val']
+
+    gram_categories = ['AM', 'AN', 'AF', 'NM', 'NF', 'NN']
+
+
+    for gram_cat in gram_categories: 
+        for s in suffix: 
+            source_csv_path = f'gradiend/data/der_die_das/splits/leipzig/{gram_cat}/filtered_{gram_cat}_{s}.csv'
+            df = pd.read_csv(source_csv_path)
+            half_indices = random.sample(list(df.index), k=len(df) // 2)
+            df.loc[half_indices, 'dataset_label'] = df.loc[half_indices, 'dataset_label'].apply(lambda x: f"_{x}")
+
+            directory = f'gradiend/data/der_die_das/splits/MFN/leipzig/{gram_cat}_mfn'
+
+            if not os.path.exists(directory): 
+                os.makedirs(directory)
+
+            target_csv_path = f'{directory}/filtered_{gram_cat}_{s}.csv'
+
+            df.to_csv(target_csv_path, index=False)
+
+        

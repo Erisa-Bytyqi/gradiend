@@ -1,6 +1,7 @@
 from tabulate import tabulate
 
 from gradiend.evaluation.analyze_encoder import get_model_metrics
+from gradiend.evaluation.encoder.de_encoder_analysis import DeEncoderAnalysis
 from gradiend.export import models as default_models
 
 
@@ -9,7 +10,7 @@ exported_metrics = {
     'pearson_total': r'\corenc',
     #'pearson_total_p_value': r'\corenc p value',
     'acc': r'\accmf',
-    'pearson_MF': r'\cormf',
+    'pearson': r'\cormf',
     #'pearson_MF_p_value': r'\cormf p value',
     'encoded_abs_means_gender masked': r'\mamf',
     'encoded_abs_means_no gender masked': r'\masmf',
@@ -17,7 +18,9 @@ exported_metrics = {
 }
 
 #TODO could be integrated in the encoder_analysis class
-def print_encoder_stats(*models):
+def print_encoder_stats(*models, config):
+
+    model_analyser = DeEncoderAnalysis(config)
     if len(models) == 0:
         models = default_models
     elif len(models) == 1 and isinstance(models[0], dict):
@@ -25,12 +28,12 @@ def print_encoder_stats(*models):
     else:
         models = {model: model for model in models}
 
-    csv_files = {pretty_model: rf'results/models/{model.removeprefix("results/models/")}_params_spl_test.csv' for model, pretty_model in models.items()}
+    csv_files = {pretty_model: rf'{model.removeprefix("results/models/")}_params_spl_test.csv' for model, pretty_model in models.items()}
 
     results = {}
     for model, file in csv_files.items():
         try:
-            result = get_model_metrics(file)
+            result = model_analyser.get_model_metrics(file)
             results[model] = result
         except FileNotFoundError:
             print(f'File {file} not found')

@@ -1,0 +1,95 @@
+plot_name: 'MFN'
+palette:  {'M': 'blue','F': 'purple', 'N': 'yellow'}
+categories:
+  M:
+    #labels: [NM] 
+    labels: ['AM', '_AM']
+    #labels: ['NM', 'GM', 'AM', 'DM']
+    #labels: ['NM', '_NM','AM', '_AM',]
+    articles: [den,der]
+    codes: [0,2]
+    score_label: 1
+    encoding: -1
+  F: 
+    labels: [AF, _AF]
+    # labels: ['NF', '_NF', 'AF', '_AF']
+    # labels: [NF, AF, _NF,  _AF]
+    articles: [die]
+    score_label: 0
+    codes: [4,6]
+    encoding: 1
+  N:
+    labels: [AN, _AN]
+    # labels: ['NN', '_NN', '_AN', 'AN']
+    # labels: [NN, AN, _NN, _AN,]
+    articles: [das]
+    score_label: 2
+    codes: [8,10]
+    encoding: 0
+combinations: ['MFN/AM_mfn', 'MFN/AN_mfn', 'MFN/AF_mfn', 'MFN/NM_mfn', MFN/NF_mfn, 'MFN/NN_mfn']  
+#combinations: [NM, AM, NF, AF, NN, AN]  
+#combinations: ['NM_mfn', 'GM_mfn', 'AM_mfn', 'DM_mfn', 'NF_mfn', 'GF_mfn', 'AF_mfn', 'DF_mfn', 'NN_mfn', 'GN_mfn', 'AN_mfn', 'DN_mfn']    
+#combinations: ['NM_mfn', 'AF_mfn', 'NF_mfn', NN_mfn, AM_mfn, AN_mfn]    
+articles: ['den', 'die', 'das', der] 
+default_predictions: ['den', 'die', 'das', der,'most_likely_token', 'label']  
+token_to_ignore: [der, die, das, den, Den, DEN, Der, Die, Das, DER, DIE, DAS]    
+NM:
+  mask: '[DER_ARTICLE]'
+  inverse: die
+  code: 0
+  encoding: -1
+_NM:
+  mask: '[DER_ARTICLE]'
+  inverse: das
+  code: 0
+  encoding: -1  
+AM: 
+  mask: '[DEN_ARTICLE]'
+  inverse: die
+  code: 2
+  encoding: -1
+_AM: 
+  mask: '[DEN_ARTICLE]'
+  inverse: das
+  code: 2
+  encoding: -1  
+NF: 
+  mask: '[DIE_ARTICLE]'
+  inverse: der
+  code: 4 
+  encoding: 1
+_NF: 
+  mask: '[DIE_ARTICLE]'
+  inverse: das
+  code: 4
+  encoding: 1  
+AF: 
+  mask: '[DIE_ARTICLE]'
+  inverse: den
+  code: 6
+  encoding: 1
+_AF: 
+  mask: '[DIE_ARTICLE]'
+  inverse: das
+  code: 6
+  encoding: 1  
+NN:
+  mask: '[DAS_ARTICLE]'
+  inverse: der
+  code: 8
+  encoding: 0
+_NN:
+  mask: '[DAS_ARTICLE]'
+  inverse: die
+  code: 8
+  encoding: 0  
+AN: 
+  mask: '[DAS_ARTICLE]'
+  inverse: die
+  code: 10
+  encoding: 0
+_AN: 
+  mask: '[DAS_ARTICLE]'
+  inverse: den
+  code: 10
+  encoding: 0  

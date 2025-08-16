@@ -1,4 +1,5 @@
 from collections import defaultdict, deque
+import glob
 import os
 import random
 import time
@@ -9,14 +10,16 @@ from tqdm import tqdm
 from gradiend.data import read_article_ds
 from gradiend.util import hash_it
 from torch.utils.data.sampler import Sampler
+from torch.utils.data import default_collate
 
 class DeTrainingDataset(Dataset):
-    def __init__(self, data, config, tokenizer, batch_size, max_token_length=48, is_generative=False):
+    def __init__(self, data, config, tokenizer, batch_size, max_token_length=48, is_generative=False, multi_task=False):
         self.data = data
         self.tokenizer = tokenizer
         self.batch_size = batch_size
         self.max_token_length = max_token_length
         self.config = config
+        self.multi_task = multi_task
 
         self.mask_token_id = self.tokenizer.mask_token_id
         self.mask_token = self.tokenizer.mask_token
@@ -60,7 +63,16 @@ class DeTrainingDataset(Dataset):
     
             item = self.tokenize(gender_text)
             gender_labels = item['input_ids'].clone()
-            inv_gender_labels = gender_labels.clone()
+            
+
+            if self.multi_task: 
+                inv_labels = []
+                counterfactuals = len(inverse_determiner)
+                for i in range(0, counterfactuals): 
+                    inv_labels.append(gender_labels.clone())
+            else:
+                inv_gender_labels = gender_labels.clone()
+
 
             sentence_delimiter = {'.', '!', '?'}
         
@@ -79,21 +91,46 @@ class DeTrainingDataset(Dataset):
             gender_labels[~mask_token_mask] = -100
             gender_labels[mask_token_mask] = self.article_tokens[(
                 determiner, upper)]  
-
-            inv_gender_labels[~mask_token_mask] = -100
-            inv_gender_labels[mask_token_mask] = self.article_tokens[(
+            
+            if self.multi_task: 
+                for inv_label, inv_det in zip(inv_labels, inverse_determiner): 
+                    inv_label[~mask_token_mask] = -100
+                    inv_label[mask_token_mask] = self.article_tokens[(inv_det, upper)]
+            else:
+                inv_gender_labels[~mask_token_mask] = -100
+                inv_gender_labels[mask_token_mask] = self.article_tokens[(
                 inverse_determiner, upper)] 
 
-            inv_item = item.copy()
-            item['labels'] = gender_labels
-            inv_item['labels'] = inv_gender_labels
 
-           
+            if not self.multi_task:
+                inv_item = item.copy()
+
+            item['labels'] = gender_labels
             label = self.config[key]['code'] 
             text = gender_text
+
+            if self.multi_task:
+                # entries = []
+                inv_items = []
+                for inv_label in inv_labels: 
+                    inv_item = item.copy() 
+                    inv_item['labels'] = inv_label
+                    inv_items.append(inv_item)
+
+                entry = {
+                    True: item,       
+                    False: inv_items,       
+                    'text': text,
+                    'label': label,
+                    'dataset_label': key
+                    }
+                    
+                # entries.append(entry)       
+            else:
+                inv_item['labels'] = inv_gender_labels
+    
         else:
             text = entry['text']
-
             item = self.tokenize(text)
             masked_input, labels = self.mask_tokens(item['input_ids'])
             item['input_ids'] = masked_input
@@ -101,19 +138,109 @@ class DeTrainingDataset(Dataset):
             inv_item = item
             label = ''
 
-        return {True: item, False: inv_item, 'text': text, 'label': label, 'dataset_label': key}    
+        if self.multi_task: 
+            return entry
+        else:
+            return {True: item, False: inv_item, 'text': text, 'label': label, 'dataset_label': key}    
 
 
-def create_de_training_dataset(tokenizer, config, max_size=None, batch_size=None, split=None, article=None, is_generative=False):
+
+# def flatten_dict_list_collate(batch, multi_grad=True):
+#     if multi_grad: 
+#         flat_batch = [sample for sublist in batch for sample in sublist]
+#     else:
+#         flat_batch = batch
+
+#     print(type(batch))
+
+#     return default_collate(flat_batch)
+
+
+def flatten_dict_list_collate(batch, multi_grad=True):
+    if multi_grad and all(isinstance(sample, list) for sample in batch):
+        flat_batch = [sample for sublist in batch for sample in sublist]
+    else:
+        flat_batch = batch
+
+    if isinstance(flat_batch[0], dict):
+        return {
+            key: _safe_collate([d[key] for d in flat_batch])
+            for key in flat_batch[0]
+        }
+    return default_collate(flat_batch)
+
+
+def _safe_collate(values):
+    try:
+        return default_collate(values)
+    except Exception:
+        return values 
+
+
+# def flatten_dict_list_collate(batch, multi_grad=True):
+#     """
+#     batch: List of dicts returned by __getitem__, each like:
+#         {
+#           True: {...},
+#           False: {...},
+#           'text': ...,
+#           'label': ...,
+#           'dataset_label': ...
+#         }
+
+#     If multi_grad=True, the outer list may be nested (i.e. list of lists of dicts),
+#     so we flatten that first.
+#     """
+#     # Flatten if each sample is itself a list of entries
+#     if multi_grad:
+#         flat_batch = [entry for sublist in batch for entry in sublist]
+#     else:
+#         flat_batch = batch
+
+#     # Now group by key
+#     collated = {}
+#     keys = flat_batch[0].keys()
+
+#     for key in keys:
+#         values = [entry[key] for entry in flat_batch]
+#         try:
+#             collated[key] = default_collate(values)
+#         except Exception as e:
+#             print(f"Collate failed for key '{key}' with error: {e}")
+#             collated[key] = values  # Fall back to keeping as list if needed
+
+#     return collated
+
+
+def create_de_training_dataset(tokenizer, config, max_size=None, batch_size=None, split=None, article=None, is_generative=False, multi_task=False):
 
     dataset = read_article_ds(split=split, article=article)
     if max_size:
         dataset = dataset.iloc[range(max_size)]
 
-    return DeTrainingDataset(dataset, config, tokenizer, batch_size=batch_size, is_generative=is_generative)
+    return DeTrainingDataset(dataset, config, tokenizer, batch_size=batch_size, is_generative=is_generative, multi_task=multi_task)
 
 
-def create_de_eval_dataset(gradiend, config, max_size=None, split='val', source='gradient', save_layer_files=False, is_generative=False):
+
+class FlattenedConcatDataset(torch.utils.data.Dataset):
+    def __init__(self, datasets):
+        self.flat_items = []
+        for ds in datasets:
+            for i in range(len(ds)):
+                item = ds[i]
+                if isinstance(item, list):
+                    self.flat_items.extend(item)
+                else:
+                    self.flat_items.append(item)
+
+    def __getitem__(self, idx):
+        return self.flat_items[idx]
+
+    def __len__(self):
+        return len(self.flat_items)
+
+
+def create_de_eval_dataset(gradiend, config, max_size=None, split='val', source='gradient', save_layer_files=False, is_generative=False, multi_task=False):
     if not source in {'gradient', 'inv_gradient', 'diff'}:
         raise ValueError(f'Invalid source {source}')
 
@@ -121,13 +248,12 @@ def create_de_eval_dataset(gradiend, config, max_size=None, split='val', source=
 
     eval_datasets = []
     for label in config['combinations']:
-        eval_dataset = create_de_training_dataset(gradiend.tokenizer, config, article=label, split=split)
-        eval_dataset.data = eval_dataset.data.head(120)
+        eval_dataset = create_de_training_dataset(gradiend.tokenizer, config, article=label, split=split, multi_task=multi_task)
         eval_datasets.append(eval_dataset)
 
     dataset = CombinedDataset(eval_datasets)
 
-    texts = dataset.data.loc[:, ['masked', 'label', 'dataset_label']]
+    #texts = dataset.data.loc[:, ['masked', 'label', 'dataset_label']]
     
     texts = dataset.data.sample(frac=1, random_state=42).reset_index(drop=True)
     #texts = shuffled.loc[:max_size, ['masked', 'label']]
@@ -154,7 +280,11 @@ def create_de_eval_dataset(gradiend, config, max_size=None, split='val', source=
     base_model = os.path.basename(base_model)
     layers_hash = gradiend.layers_hash
     cache_dir = f'data/cache/gradients/{base_model}/{source}/{layers_hash}'
-    gradients = defaultdict(dict)  # maps texts to the gradients
+
+    if multi_task: 
+        gradients = defaultdict(lambda: defaultdict(list))
+    else:
+        gradients = defaultdict(dict)  # maps texts to the gradients
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
 
@@ -162,17 +292,31 @@ def create_de_eval_dataset(gradiend, config, max_size=None, split='val', source=
     text_iterator = tqdm(
         filled_texts, desc=f'Loading cached evaluation data', leave=False)
     layers_hash = hash_it(gradiend.gradiend.layers)
+
     for i, filled_text in enumerate(text_iterator):
         text_hash = hash_it(filled_text)
 
-        def create_layer_file(layer):
-            return f'{cache_dir}/{text_hash}/{layer}.pt'
+        def create_layer_file(layer, index=None):
+            filename = f'{layer}.pt' if index is None else f'{layer}__{index}.pt'
+            return f'{cache_dir}/{text_hash}/{filename}'
+        
 
-        cached_tensor_file = f'{cache_dir}/tensor_{text_hash}.pt'
-        if os.path.exists(cached_tensor_file):
-            gradient = torch.load(cached_tensor_file).half().cpu()
-            gradients[filled_text] = gradient
-            continue
+        if multi_task: 
+            pattern = f'{cache_dir}/tensor_{text_hash}_*.pt'
+            cached_files = sorted(glob.glob(pattern))  
+
+            if cached_files:
+                gradients[filled_text]['full'] = []
+                for file in cached_files:
+                    gradient = torch.load(file).half().cpu()
+                    gradients[filled_text]['full'].append(gradient)
+                continue
+        else:
+            cached_tensor_file = f'{cache_dir}/tensor_{text_hash}.pt'
+            if os.path.exists(cached_tensor_file):
+                gradient = torch.load(cached_tensor_file).half().cpu()
+                gradients[filled_text] = gradient
+                continue
 
         # first check whether we need to calculate the gradients
         requires_grad = any(not os.path.exists(create_layer_file(layer))
@@ -206,8 +350,16 @@ def create_de_eval_dataset(gradiend, config, max_size=None, split='val', source=
                     label = inv_label
                     #config[filled_texts[filled_text]['dataset_label']]['inverse']
 
-                inputs = gradiend.create_inputs(filled_text, label)
-                grads = gradiend.forward_pass(inputs, return_dict=True)
+                if multi_task:
+                    all_grads = [] 
+                    for label in inv_label: 
+                        inputs = gradiend.create_inputs(filled_text, label)
+                        grads = gradiend.forward_pass(inputs, return_dict=True)
+                        all_grads.append(grads)
+
+                else:
+                    inputs = gradiend.create_inputs(filled_text, label)
+                    grads = gradiend.forward_pass(inputs, return_dict=True)
 
             if save_layer_files:
                 # create the directory
@@ -217,33 +369,66 @@ def create_de_eval_dataset(gradiend, config, max_size=None, split='val', source=
             grads = None
 
         for layer in gradiend.gradiend.layers:
-            layer_file = create_layer_file(layer)
-            if not os.path.exists(layer_file):
-                weights = grads[layer].half().flatten().cpu()
-                if save_layer_files:
-                    # Saving individual layer files doubles the necessary storage, but is more efficient when working with different layer subsets
-                    torch.save(weights, layer_file)
-            else:
-                weights = torch.load(layer_file, weights_only=False)
+            if multi_task: 
+                for idx, grad in enumerate(all_grads):
+                    layer_file = create_layer_file(layer, index=idx)
+                    if not os.path.exists(layer_file):
+                        weights = grad[layer].half().flatten().cpu()
+                    else: 
+                        weights = torch.load(layer_file, weights_only=False)
+                    gradients[filled_text][layer].append(weights.float())    
+            else:         
+                layer_file = create_layer_file(layer, index=None)
+                if not os.path.exists(layer_file):
+                    weights = grads[layer].half().flatten().cpu()
+       
+                    if save_layer_files:
+                        # Saving individual layer files doubles the necessary storage, but is more efficient when working with different layer subsets
+                        torch.save(weights, layer_file)
+                else:
+                    weights = torch.load(layer_file, weights_only=False)
 
-            # convert back to float32 for consistency with other parameters
-            weights = weights.float()
-            gradients[filled_text][layer] = weights
+                weights = weights.float()
+                gradients[filled_text][layer] = weights
+
+
+            # gradients[filled_text][layer] = weights
 
         # convert layer dict to single tensor
-        full_gradient = torch.concat(
-            [v for v in gradients[filled_text].values()], dim=0).half()
-        gradient = full_gradient
-        if isinstance(gradiend.gradiend.layers, dict):
-            mask = torch.concat(
-                [gradiend.gradiend.layers[k].flatten() for k in gradients[filled_text].keys()], dim=0
-            ).cpu()
-            gradient = full_gradient[mask]
+        if multi_task: 
+            num_grads = len(next(iter(gradients[filled_text].values())))
+            gradients[filled_text]['full'] = []
 
-        gradients[filled_text] = gradient
-        torch.save(gradient, cached_tensor_file)
+         
+            for idx in range(num_grads):
+                full_gradient = torch.concat([gradients[filled_text][layer][idx] for layer in gradients[filled_text] if layer != 'full'], dim=0
+                ).half()
+
+                gradient = full_gradient
+                if isinstance(gradiend.gradiend.layers, dict):
+                    mask = torch.concat([gradiend.gradiend.layers[k].flatten() for k in gradients[filled_text].keys()], dim=0).cpu()
+                    gradient = full_gradient[mask]
+                
+                gradients[filled_text]['full'].append(gradient)
+                cached_tensor_file = f'{cache_dir}/tensor_{text_hash}_{idx}.pt' 
+                #cache_file = os.path.join(cache_dir, f"{text_hash}__{idx}_full.pt")
+                torch.save(gradient, cached_tensor_file)
+            
+        else:
+            full_gradient = torch.concat(
+                [v for v in gradients[filled_text].values()], dim=0).half()
+            gradient = full_gradient
+            if isinstance(gradiend.gradiend.layers, dict):
+                mask = torch.concat(
+                    [gradiend.gradiend.layers[k].flatten() for k in gradients[filled_text].keys()], dim=0
+                ).cpu()
+                gradient = full_gradient[mask]
+
+            gradients[filled_text] = gradient
+            torch.save(gradient, cached_tensor_file)
 
 
+    return create_grads_and_labels(filled_texts, config, multi_grad=multi_task, gradients=gradients)
     labels = {k: config[v['dataset_label']]['code'] for k,v in filled_texts.items()}
     print(labels)
     result = {
@@ -255,6 +440,36 @@ def create_de_eval_dataset(gradiend, config, max_size=None, split='val', source=
         f'Loaded the evaluation data with {len(gradients)} entries in {time.time() - start:.2f}s')
 
     return result
+
+
+def create_grads_and_labels(filled_texts, config, multi_grad, gradients): 
+    labels = {}
+    flat_gradients = {}
+
+    for filled_text, v in filled_texts.items():
+        label_code = config[v['dataset_label']]['code']
+
+        if multi_grad:
+            for idx, grad in enumerate(gradients[filled_text]['full']):
+                key = f"{filled_text}_{idx}"
+                flat_gradients[key] = grad
+                labels[key] = label_code
+        else:
+            flat_gradients[filled_text] = gradients[filled_text]
+            labels[filled_text] = label_code
+
+    result = {
+        'gradients': flat_gradients,
+        'labels': labels
+        }
+    
+    print(labels)
+    
+    print(
+        f'Loaded the evaluation data with {len(gradients)} entries')
+    
+    return result
+
 
 
 
@@ -297,6 +512,7 @@ class SingleLabelBatchSampler(Sampler):
                     batch = label_batches[label].popleft()
                     interleaved.append(batch)
 
+
         return interleaved         
              
 
@@ -321,3 +537,70 @@ class CombinedDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.data.iloc[idx]  
+    
+
+from torch.utils.data import Sampler
+from collections import defaultdict, deque
+import random
+
+class PairedLabelBatchSampler(Sampler):
+    def __init__(self, dataset, batch_size, drop_last=False):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+
+        # Group indices by label
+        self.label_to_indices = defaultdict(list)
+        for idx in range(len(dataset)):
+            label = dataset[idx]['dataset_label']
+            self.label_to_indices[label].append(idx)
+
+        # Group labels into pairs (NM + _NM)
+        self.paired_labels = self._create_label_pairs()
+        self.batches = self._create_batches()
+        print(f'# paired label groups: {len(self.paired_labels)}')
+
+    def _create_label_pairs(self):
+        pairs = defaultdict(list)
+        for label in self.label_to_indices:
+            base_label = label.replace('_', '')  # e.g., NM from _NM
+            pairs[base_label].append(label)
+        return pairs
+
+    def _create_batches(self):
+        paired_batches = []
+        for base_label, label_group in self.paired_labels.items():
+            if len(label_group) != 2:
+                print(f"incomplete pair for label: {label_group}")
+                continue
+
+            label1, label2 = label_group
+            indices1 = self.label_to_indices[label1]
+            indices2 = self.label_to_indices[label2]
+
+           
+            random.shuffle(indices1)
+            random.shuffle(indices2)
+
+            split_size = self.batch_size // 2
+            min_len = min(len(indices1), len(indices2))
+
+            max_batches = min_len // split_size
+
+            for i in range(max_batches):
+                part1 = indices1[i * split_size:(i + 1) * split_size]
+                part2 = indices2[i * split_size:(i + 1) * split_size]
+                batch = part1 + part2
+                if len(batch) == self.batch_size or not self.drop_last:
+                    paired_batches.append(batch)
+
+        return paired_batches
+
+    def __iter__(self):
+        random.seed(42)
+        random.shuffle(self.batches)  # Optional: shuffle final batch order
+        for batch in self.batches:
+            yield batch
+
+    def __len__(self):
+        return len(self.batches)

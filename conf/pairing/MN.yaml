@@ -1,0 +1,60 @@
+plot_name: 'MN'
+palette:  {'M': 'blue','N': 'orange'}
+categories:
+  M: 
+    labels: [NM, AM]
+    #labels: [NM, GM, AM, DM]
+    articles: [der,den]
+    #articles: [der,des,den,dem]
+    codes: [0,2]
+    encoding: -1
+  N: 
+    labels: ['NN', 'AN']
+    #labels: [NN, NG, NA, ND]
+    articles: [das]
+    #articles: [das,des,dem]
+    codes: [4,6]
+    encoding: 1
+#combinations: ['NM', 'GM', 'AM', 'DM', 'NN', 'GN', 'AN', 'DN']   
+combinations: ['NM', 'AM', 'NN', 'AN']
+#articles:  ['der', 'das', 'des', 'dem', 'den'] 
+articles:  ['der', 'das', 'den'] 
+#default_predictions: ['der', 'das', 'des', 'den', 'dem', 'most_likely_token', 'label']  
+default_predictions: ['der', 'das', 'den','most_likely_token', 'label']  
+token_to_ignore: [der, 'das',des, den, Der, Das, Des, Den, Dem, DER, DAS, DEN, DEM]
+NM:
+  mask: '[DER_ARTICLE]'
+  inverse: 'das'
+  code: 0
+  encoding: -1
+# GM: 
+#   mask: '[DES_ARTICLE]'
+#   inverse: 'des'
+#   code: 1
+AM: 
+  mask: '[DEN_ARTICLE]'
+  inverse: 'das' 
+  code: 2
+  encoding: -1
+# DM: 
+#   mask: '[DEM_ARTICLE]'
+#   inverse: 'dem'
+#   code: 3
+NN:
+  mask: '[DAS_ARTICLE]'
+  inverse: 'der'
+  code: 4
+  encoding: 1
+# GN: 
+#   mask: '[DES_ARTICLE]'
+#   inverse: 'des'
+#   code: 5
+AN: 
+  mask: '[DAS_ARTICLE]'
+  inverse: 'den' 
+  code: 6
+  encoding: 1
+# DN: 
+#   mask: '[DEM_ARTICLE]'
+#   inverse: 'dem'
+#   code: 7 

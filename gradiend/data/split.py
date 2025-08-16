@@ -1,11 +1,14 @@
 import pandas as pd
 
 
-def split(file, data=None, prop_val=0.025, prop_test=0.1):
+def split(file, num_samples=None, data=None, prop_val=0.025, prop_test=0.1):
     # Load the data from a CSV file if not already provided
     if data is None:
         data = pd.read_csv(file)
-    data = data.sample(frac=1, random_state=42).reset_index(drop=True)
+
+    #data = data.sample(frac=1, random_state=42).reset_index(drop=True)
+    data = data.sample(n=num_samples, random_state=42).reset_index(drop=True)
+
     # Split the data into training and testing sets
 
     n_val = int(data.shape[0] * prop_val)
@@ -29,3 +32,6 @@ def split(file, data=None, prop_val=0.025, prop_test=0.1):
     test_data['split'] = 'test'
     combined = pd.concat([train_data, val_data, test_data])
     combined.to_csv(output_prefix + '_split.csv', index=False)
+
+if __name__ == '__main__':   
+    split('gradiend/data/der_die_das/splits/leipzig/NN/filtered_NN.csv', num_samples=2550)    

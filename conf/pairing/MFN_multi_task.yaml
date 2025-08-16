@@ -1,0 +1,54 @@
+plot_name: 'multi_task'
+palette:  {'M': 'blue','F': 'purple', 'N': 'yellow'}
+categories:
+  M:
+    labels: [NM] 
+    articles: [den]
+    codes: [0]
+    encoding: -1
+  F: 
+    labels: [NF]
+    articles: [die]
+    codes: [1]
+    encoding: 1
+  N:
+    labels: [NN]
+    articles: [das]
+    codes: [2]
+    encoding: 0
+#combinations: [NM, NN, NF]  
+#combinations: [NM, NF, NN] 
+combinations: ['AM', 'AN', 'AF'] 
+articles: ['den', 'die', 'das'] 
+default_predictions: ['den', 'die', 'das', 'most_likely_token', 'label']  
+token_to_ignore: [der,des,den,dem, die, das, Der, Des, Den, Dem, Die, Das, DER, DES, DEN, DEM, DIE, DAS]    
+NM:
+  mask: '[DER_ARTICLE]'
+  inverse: [die, das]
+  code: 0
+  encoding: -1 
+AM:
+  mask: '[DEN_ARTICLE]'
+  inverse: [die, das]
+  code: 0
+  encoding: -1  
+NF: 
+  mask: '[DIE_ARTICLE]'
+  inverse: [der,das]
+  code: 1
+  encoding: 1
+AF: 
+  mask: '[DIE_ARTICLE]'
+  inverse: [den,das]
+  code: 1
+  encoding: 1  
+NN:
+  mask: '[DAS_ARTICLE]'
+  inverse: [die,der]
+  code: 2
+  encoding: 0
+AN:
+  mask: '[DAS_ARTICLE]'
+  inverse: [die,den]
+  code: 2
+  encoding: 0 

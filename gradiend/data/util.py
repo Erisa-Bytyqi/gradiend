@@ -89,7 +89,7 @@ def enrich_with_plurals(input_dict):
 #TODO this is duplicated code from analyze_encoder
 def get_file_name(base_file_name, file_format=None, **kwargs):
     base_name = os.path.basename(base_file_name)
-    output = base_file_name
+    output = str(base_file_name)
     if '.' in base_name[-5:]:
         current_file_format = base_name.split('.')[-1]
         if current_file_format in {'csv', 'json', 'txt', 'tsv'}:
