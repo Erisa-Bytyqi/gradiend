@@ -25,4 +25,18 @@ python train.py mode=gradiend pairing=MFN num_runs=2
 - `--mode.model_config.num_runs`: Sets how many models to train.
 
 
+This ensures you have the required version for grammatical gender support.
 You can override any configuration in the `/conf` directory. The example command above demonstrates a minimalist setup to train two GRADIEND models for all three german grammatical genders using the original GRADIEND method.
+
+## Installing DERBI
+
+To use this repository, install DERBI using the command below. 
+
+Upstream (reference only): [DERBI](https://github.com/maxschmaltz/DERBI)
+
+Install from fork (required):
+
+```bash
+pip install git+https://github.com/Erisa-Bytyqi/DERBI.git@pip-install
+```
+
