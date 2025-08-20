@@ -15,7 +15,7 @@ This repository extends the original GRADIEND framework to address grammatical g
 To train and evaluate a GRADIEND model for grammatical gender in German:
 
 ```bash
-python train.py mode=gradiend pairing=MFN mode.model_config.num_runs=2
+python train.py mode=gradiend pairing=MFN num_runs=2
 ```
 
 

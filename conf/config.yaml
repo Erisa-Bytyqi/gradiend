@@ -1,9 +1,9 @@
 defaults: 
   - mode: gradiend 
   - pairing: FN
-  - eval_only: False
   - _self_
 
+eval_only: false
 base_model: 'bert-base-german-cased'
 num_runs: 2
 hydra:
