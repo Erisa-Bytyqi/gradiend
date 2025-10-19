@@ -481,8 +481,6 @@ def train(model_with_gradiend,
                     # gc.collect()  # Run Python garbage collection
                     # torch.cuda.empty_cache()  # Release unused memory back to CUDA driver
             
-            print(prof.key_averages().table(sort_by="self_cuda_memory_usage", row_limit=20))
-
             loss_ae = loss_ae.item()
             training_gradiend_time += time.time() - gradiend_start
 
