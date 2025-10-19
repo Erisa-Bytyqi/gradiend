@@ -1,20 +1,15 @@
 import json
 import os
+from typing import List
 import torch
 import torch.nn as nn
-
-from gradiend.training.gradiend_training import train
 from gradiend.model import GradiendModel, LargeLinear, ModelWithGradiend
 
-
-# TODO a LOT of cleaning it up, currently akin to a scaffolding
 
 
 class StackedGradiend(GradiendModel):
     def __init__(self, input_dim, layers, models, latent_dim=1, *args, **kwargs):
-        super().__init__(
-            input_dim=input_dim, latent_dim=1, layers=layers, *args, **kwargs
-        )
+        super().__init__(input_dim=input_dim, latent_dim=1, layers=layers, *args, **kwargs)
 
         self.encoders = nn.ModuleList()
         self.decoders = nn.ModuleList()
@@ -36,8 +31,6 @@ class StackedGradiend(GradiendModel):
         self.models = models
         self.device = self.base_model.device
 
-    # also name encode? it's not really forward...
-    # but now the decoders should definitely be 'replaced' as well
     def encode(self, x):
         encoded = []
         for encoder in self.encoders:
@@ -70,85 +63,141 @@ class StackedGradiend(GradiendModel):
 
     def forward(self, x, return_encoded=False):
         pass
-        "TODO yeah i do not want to call this..."
-        # how can i make sure that the right encoder-> decoders are being pared i mean they're being added to the lists appropriately..
 
     def extract_gradients(self, bert, return_dict=False):
         return super().extract_gradients(self.base_model, return_dict)
 
 
-class CominedEncoderDecoder(GradiendModel):
+
+def _get_model_layers(models_with_grad: List[str]):
+    if not models_with_grad:
+        raise ValueError("No models were provided")
+
+    models = _load_grad_models(models_with_grad)
+
+    ordered_lists = []
+    for model in models:
+        # keep original order from named_parameters()
+        names = [k for k, _ in model.base_model.named_parameters()
+                 if "cls.prediction" not in k.lower()]
+        ordered_lists.append(names)
+
+
+    ref = set(ordered_lists[0])
+    if all(set(lst) == ref for lst in ordered_lists[1:]):
+        return ordered_lists[0]   
+    else:
+        raise ValueError("Models have different parameter name sets")
+
+
+def _get_input_dim(models_with_grad: List['str']): 
+    if not models_with_grad: 
+        raise ValueError('No models were provided')
+    
+    models_with_grad = _load_grad_models(models_with_grad)
+    
+    input_dims = []
+
+    for model in models_with_grad: 
+        input_dim = getattr(model.gradiend, "input_dim", None)
+        input_dims.append(input_dim)
+    
+    #input_dims = [getattr(model.gradiend, "input_dim", None) for model in models_with_grad]
+
+
+    if all(dim == input_dims[0] for dim in input_dims[1:]):
+        return input_dims[0]
+    else: 
+        raise ValueError('Models do not have the same input dimensions. Cannot combine them.')
+
+def _load_grad_models(model_paths: List['str']) -> List['ModelWithGradiend']:
+    grad_models = []
+    for model_path in model_paths: 
+        grad_model = ModelWithGradiend.from_pretrained(model_path)
+        grad_models.append(grad_model)
+    return grad_models
+
+ 
+class MultiEncoder(nn.Module):
+    def __init__(self, encoders, mode: str = "concat", freeze = False):
+        super().__init__()
+        if freeze: 
+            for encoder in encoders:
+                for param in encoder.parameters():
+                    param.requires_grad = False
+
+        self.encoders = nn.ModuleList(encoders)
+        assert mode in ("concat", "stack")
+        self.mode = mode
+
+    def forward(self, x):
+        outs = [enc(x) for enc in self.encoders]
+        return torch.cat(outs, dim=-1) if self.mode == "concat" else torch.stack(outs, dim=-1)
+    
+
+
+    @property
+    def encoder_norm(self):
+        total_sq = 0.0
+        for enc in self.encoders:  # MultiEncoder.encoders is your ModuleList
+            total_sq += torch.norm(enc[0].weight, p=2).item() ** 2
+        return total_sq ** 0.5
+
+    
+
+
+class CombinedEncoderDecoder(GradiendModel):
     def __init__(
         self,
-        grad_models,
+        grad_model_paths: List['str'],
         num_encoders,
-        input_dim,
         latent_dim,
-        layers,
         freeze_encoder=False,
         activation="tanh",
         dec_init="trained",
-        enc_init=False,
+        merge=False,
         shared=False,
         decoder_factor=1.0,
         **kwargs,
     ):
         super().__init__(
-            input_dim=input_dim,
+            input_dim=_get_input_dim(grad_model_paths) if grad_model_paths else None,
             latent_dim=latent_dim,
-            layers=layers,
+            layers=_get_model_layers(grad_model_paths) if grad_model_paths else None,
             activation=activation,
             **kwargs,
         )
 
-        self.num_encoders = num_encoders
+        self.grad_model_paths = grad_model_paths
+        self.num_encoders = len(grad_model_paths) if grad_model_paths else None
         self.dec_init = dec_init
+        self.input_dim = _get_input_dim(grad_model_paths) if grad_model_paths else None
+        self.layers = _get_model_layers(grad_model_paths) if grad_model_paths else None
         self.freeze_encoder = freeze_encoder
         self.decoder_factor = decoder_factor
         self.latent_dim = latent_dim
         self.activation = activation
         self.shared = shared
+        self.kwargs = kwargs 
+        self.merge = merge
+        self.grad_models = _load_grad_models(grad_model_paths)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        if enc_init == False:
-            if grad_models:
-                self.encoder = nn.ModuleList()
-                self.og_decoders = nn.ModuleList()
-            else:
-                self.encoder = nn.ModuleList(
-                    [
-                        nn.Sequential(
-                            LargeLinear(input_dim, latent_dim, device=self.device),
-                            nn.Tanh(),
-                        )
-                        for _ in range(num_encoders)
-                    ]
-                )
-                self.og_decoders = nn.ModuleList(
-                    [
-                        nn.Sequential(
-                            LargeLinear(latent_dim, input_dim, device=self.device),
-                            nn.Tanh(),
-                        )
-                        for _ in range(num_encoders)
-                    ]
-                )
+        if not self.merge and self.grad_models: # keeps the encoders and decoders separate
+            self.encoder = MultiEncoder([m.gradiend.encoder for m in self.grad_models], mode="concat", freeze=freeze_encoder)
+            self.decoder = self._set_up_decoder(self.grad_models, dec_init=self.dec_init)
 
-            if grad_models:
-                for model in grad_models:
-                    self.encoder.append(model.gradiend.encoder)
-                    self.og_decoders.append(model.gradiend.decoder)
+               
         else:
-            self.encoder = nn.Sequential(
-                LargeLinear(input_dim, num_encoders, device=self.device), nn.Tanh()
-            )
+            encoders = nn.ModuleList()
+            self.encoder = MultiEncoder(encoders, mode="concat")
 
-            if grad_models:
+            if self.grad_models:
                 self.og_decoders = nn.ModuleList()
                 self.og_encoders = nn.ModuleList()
 
-                for model in grad_models:
+                for model in self.grad_models:
                     self.og_decoders.append(model.gradiend.decoder)
                     self.og_encoders.append(model.gradiend.encoder)
 
@@ -163,119 +212,34 @@ class CominedEncoderDecoder(GradiendModel):
                             print(f"  {name}: {tensor.shape}")
 
                     new_state = {}
-                    state_dict = grad_models[0].gradiend.encoder.state_dict()
-                    state_dict_1 = grad_models[1].gradiend.encoder.state_dict()
-                    state_dict_2 = grad_models[2].gradiend.encoder.state_dict()
+                    state_dict = self.grad_models[0].gradiend.encoder.state_dict()
+                    state_dict_1 = self.grad_models[1].gradiend.encoder.state_dict()
+                    state_dict_2 = self.grad_models[2].gradiend.encoder.state_dict()
 
                     print(state_dict.keys(), state_dict_1.keys(), state_dict_2.keys())
 
                     for key in state_dict.keys():
                         if "linear" in key and "weight" in key:
                             new_state[key] = torch.cat(
-                                [
-                                    encoder_state[key]
-                                    for encoder_state in encoder_states
-                                ],
+                                [encoder_state[key] for encoder_state in encoder_states],
                                 dim=0,
                             )
                         elif "linear" in key and "bias" in key:
-                            bias_avg = sum(
-                                encoder_state[key] for encoder_state in encoder_states
-                            ) / len(encoder_states)
+                            bias_avg = sum(encoder_state[key] for encoder_state in encoder_states) / len(
+                                encoder_states
+                            )
                             new_bias = torch.full((3,), bias_avg.item())
 
                             new_state[key] = new_bias.clone()
 
                 self.encoder.load_state_dict(new_state)
-            else:
-                self.og_decoders = nn.ModuleList(
-                    [
-                        nn.Sequential(
-                            LargeLinear(latent_dim, input_dim, device=self.device),
-                            nn.Tanh(),
-                        )
-                        for _ in range(num_encoders)
-                    ]
-                )
-                self.og_encoders = nn.ModuleList(
-                    [
-                        nn.Sequential(
-                            LargeLinear(input_dim, latent_dim, device=self.device),
-                            nn.Tanh(),
-                        )
-                        for _ in range(num_encoders)
-                    ]
-                )
+         
 
-        if self.freeze_encoder:
-            for encoder in self.encoder:
-                for param in encoder.parameters():
-                    param.requires_grad = False
-
-        self.decoder = nn.Sequential(
-            LargeLinear(num_encoders, input_dim, device=self.device), nn.Tanh()
-        )
-
-        self.encoder_scales = []
-
-        # intialises the new decoder with the weights of the already trained decoders.
-        if dec_init == "trained":
-            with torch.no_grad():
-                decoder_states = []
-                for decoder in self.og_decoders:
-                    decoder_states.append(decoder.state_dict())
-
-                for i, state in enumerate(decoder_states):
-                    print(f"Decoder {i}:")
-                    for name, tensor in state.items():
-                        print(f"  {name}: {tensor.shape}")
-
-                new_state = {}
-                state_dict = self.og_decoders[0].state_dict()
-                state_dict_1 = self.og_decoders[0].state_dict()
-                state_dict_2 = self.og_decoders[0].state_dict()
-
-                print(state_dict.keys(), state_dict_1.keys(), state_dict_2.keys())
-
-                for key in state_dict.keys():
-                    if "linear" in key and "weight" in key:
-                        new_state[key] = torch.cat(
-                            [decoder_state[key] for decoder_state in decoder_states],
-                            dim=1,
-                        )
-                    elif "linear" in key and "bias" in key:
-                        new_state[key] = sum(
-                            decoder_state[key] for decoder_state in decoder_states
-                        ) / len(decoder_states)
-
-                # for key in state_dict.keys():
-                #     if 'weight' in key:
-                #         new_state[key] = torch.cat([decoder_state[key] for decoder_state in decoder_states], dim=1)
-
-                #     if 'bias' in key:
-                #         new_state[key] = sum(decoder_state[key] for decoder_state in decoder_states) / len(decoder_states)
-
-            self.decoder.load_state_dict(new_state)
-
-        elif dec_init == "scratch":
-            # for i in range(num_encoders):
-            #     x = self.encoder[i][0].weight.max().item() * self.decoder_factor
-            #     self.encoder_scales.append(x)
-
-            with torch.no_grad():
-                nn.init.xavier_uniform_(self.decoder[0].weight)
-                # for i, scale in enumerate(self.encoder_scales):
-                #     nn.init.uniform_(self.decoder[0].weight[:, i:i+1], -scale, scale)
-        # else:
-        #     NotImplementedError
 
     @property
     def encoder_norm(self):
-        total_norm = 0.0
-        if self.shared:
-            for encoder in self.encoder:
-                total_norm += torch.norm(encoder[0].weight, p=2).item() ** 2
-                return total_norm**0.5
+        if not self.merge:
+           return self.encoder.encoder_norm
         else:
             return torch.norm(self.encoder[0].weight, p=2).item()
 
@@ -283,87 +247,132 @@ class CominedEncoderDecoder(GradiendModel):
     def decoder_norm(self):
         return torch.norm(self.decoder[0].weight, p=2).item()
 
+    def _set_up_decoder(self, grad_models: List['ModelWithGradiend'], dec_init='trained' ):
+        decoder = nn.Sequential(LargeLinear(self.num_encoders, self.input_dim, device=self.device), nn.Tanh())
+
+        if dec_init == "trained":
+            with torch.no_grad():
+                decoder_states = []
+                for model in grad_models:
+                    decoder_states.append(model.gradiend.decoder.state_dict())
+
+
+                new_state = {}
+                 
+                state_dict = grad_models[0].gradiend.decoder.state_dict()
+            
+                for key in state_dict.keys():
+                    if "linear" in key and "weight" in key:
+                        new_state[key] = torch.cat(
+                            [decoder_state[key] for decoder_state in decoder_states],
+                            dim=1,
+                        )
+                    elif "linear" in key and "bias" in key:
+                        new_state[key] = sum(decoder_state[key] for decoder_state in decoder_states) / len(
+                            decoder_states
+                        )
+
+
+            decoder.load_state_dict(new_state)
+
+        elif dec_init == "scratch":
+            # for i in range(num_encoders):
+            #     x = self.encoder[i][0].weight.max().item() * self.decoder_factor
+            #     self.encoder_scales.append(x)
+
+            with torch.no_grad():
+                nn.init.xavier_uniform_(decoder[0].weight)
+                # for i, scale in enumerate(self.encoder_scales):
+                #     nn.init.uniform_(self.decoder[0].weight[:, i:i+1], -scale, scale)
+        else:
+            NotImplementedError
+
+        return decoder
+
+
     @classmethod
     def from_pretrained(cls, load_path, device=None):
-        # Load saved state dict
-        model_path = os.path.join(load_path, "pytorch_model.bin")
-        config_path = os.path.join(load_path, "config.json")
-        checkpoint = torch.load(model_path, map_location=device)
+        model_path  = os.path.join(load_path, "pytorch_model.bin")
         config_path = os.path.join(load_path, "config.json")
 
         with open(config_path, "r") as f:
             config = json.load(f)
 
-        # Rebuild architecture using saved metadata
-        model = cls(
-            **config, grad_models=[], num_encoders=3, dec_init=None, enc_init=True
-        )
+   
+        model = cls(**config)
 
-        # Load entire saved state
-        # model.load_state_dict(checkpoint['state_dict'])
+       
+        state = torch.load(model_path, map_location=device)
+        missing, unexpected = model.load_state_dict(state, strict=True) 
 
-        state_dict = torch.load(model_path, map_location=device, weights_only=True)
-        model.load_state_dict(state_dict)
+        if missing or unexpected:
+            print("[load] missing:", missing)
+            print("[load] unexpected:", unexpected)
 
         model.name_or_path = load_path
 
+        if 'layers_path' in config:
+            layers_path = os.path.join(load_path, config['layers_path'])
+            try:
+                model.layers = torch.load(layers_path, map_location=device)
+            except FileNotFoundError:
+                print(f"Warning: {layers_path} not found.")
+
         return model
 
-    # @classmethod
-    # def from_pretrained(cls, load_directory, device_encoder=None, device_decoder=None):
+    
+    def save_pretrained(self, save_directory, **kwargs):
+        os.makedirs(save_directory, exist_ok=True)
+        model_path = os.path.join(save_directory, 'pytorch_model.bin')
+        config_path = os.path.join(save_directory, 'config.json')
+        layers_path = os.path.join(save_directory, 'layers.pth')
 
-    #     model_path = os.path.join(load_directory, 'pytorch_model.bin')
-    #     config_path = os.path.join(load_directory, 'config.json')
+        # Save model state dictionary
+        torch.save(self.state_dict(), model_path)
 
-    #     # Load model configuration
-    #     with open(config_path, 'r') as f:
-    #         config = json.load(f)
+        self.kwargs.update(kwargs)
 
-    #     if 'llama' in load_directory.lower() and device_encoder is None and device_decoder is None:
-    #         # check that two GPUs are available
-    #         if torch.cuda.device_count() < 2:
-    #             raise RuntimeError("Two GPUs are required for GRADIEND Llama models.")
+        # Save sparse tensor layers separately
+        if isinstance(self.layers, dict):
+            torch.save(self.layers, layers_path)
 
-    #         device_encoder = torch.device("cuda:1")
-    #         device_decoder = torch.device("cuda:0")
+        # Save model configuration
+        config = {
+            'grad_model_paths': self.grad_model_paths,
+            'latent_dim': self.latent_dim,
+            'activation': self.activation,
+            'activation_decoder': self.activation_decoder,
+            'bias_decoder': self.bias_decoder,
+            'merge': self.merge,
+            'freeze_encoder': self.freeze_encoder,
+            'activation': self.activation,
+            'dec_init': self.dec_init,
+            'shared': self.shared,
+            'num_encoders': self.num_encoders,
+            **self._serialize_kwargs(),
+        }
 
-    #     # Instantiate the model
-    #     model = cls(**config, device_encoder=device_encoder, device_decoder=device_decoder, grad_models = None, num_encoders=3)
+        if isinstance(self.layers, dict):
+            config['layers_path'] = 'layers.pth'
 
-    # # todo check GPU?
-    #     # Load model state dictionary
-    #     state_dict = torch.load(model_path, map_location=device_decoder, weights_only=True)
+        with open(config_path, 'w') as f:
+            json.dump(config, f)
 
-    #     # Check if the model is a legacy checkpoint
-    #     if 'encoder.0.weight' in state_dict and 'decoder.0.weight' in state_dict:
-    #         state_dict = cls._load_legacy_state_dict(state_dict)
+    def _serialize_kwargs(self):
+        kwargs = self.kwargs.copy()
+        training_kwargs = kwargs['training'].copy()
 
-    #     model.load_state_dict(state_dict)
+        # if training_kwargs['layers'] is not None and isinstance(training_kwargs['layers'], dict):
+        #     training_kwargs['layers'] = list(training_kwargs['layers'].keys())
+        #     training_kwargs['layers_path'] = 'layers.pth'
+        kwargs['training'] = training_kwargs
 
-    #     model.name_or_path = load_directory
+        return kwargs
 
-    #     if 'layers_path' in config:
-    #         layers_path = os.path.join(load_directory, config['layers_path'])
-    #         # Load sparse layers
-    #         try:
-    #             model.layers = torch.load(layers_path)
-    #         except FileNotFoundError:
-    #             print(f"Warning: {layers_path} not found. Using all layers by default. This will be deprecated soon. Please do only specify layers_path in config if a layers_path exists")
-
-    #     return model
-
-    def encode(self, x, shared):
-        if shared:
-            encoded = []
-            for enc in self.encoder:
-                out = enc(x).item()
-                encoded.append(out)
-            return encoded
-        else:
-            return self.encoder(x)
+    def encode(self, x):
+        return self.encoder(x)
 
     def modified_decode(self, x, method="sum"):
-        # x-is three dim  there is a diff between [1,1,1] and [1][1][1]...
         out = self.decoder(torch.tensor(x, dtype=torch.float, device=self.device))
 
         if method == "sum":
@@ -371,54 +380,32 @@ class CominedEncoderDecoder(GradiendModel):
         else:
             return torch.mean(out, dim=1)
 
-        # this accepts a outputdim by 3 vector and should deliver a 1, input-dim vecotr for model modification
-
     def forward(self, x, return_encoded=False):
-        # possibly new implementation..... that allows for retraining of the Combined
         return super().forward(x, return_encoded)
 
 
-import yaml
-from gradiend.combined_models.combined_gradiends import (
-    StackedGradiend,
-    CominedEncoderDecoder,
-)
 
 
-if __name__ == "__main__":
-    config = yaml.safe_load(open("config.yml"))["M_F_N_leipzig"]
+# if __name__ == "__main__":
+    # config = yaml.safe_load(open("config.yml"))["M_F_N_leipzig"]
 
-    MF = "results/experiments/gradiend/MF/1e-05/bert-base-german-cased/0"
-    MN = "results/experiments/gradiend/MN/1e-05/bert-base-german-cased/0"
-    FN = "results/experiments/gradiend/FN/1e-5/bert-base-german-cased/0"
+    # MF = "results/experiments/gradiend/MF/1e-05/bert-base-german-cased/0"
+    # MN = "results/experiments/gradiend/MN/1e-05/bert-base-german-cased/0"
+    # FN = "results/experiments/gradiend/FN/1e-5/bert-base-german-cased/0"
 
-    MF_model = ModelWithGradiend.from_pretrained(MF)
-    base_model = MF_model.base_model
-    tokenizer = MF_model.tokenizer
-    MN_model = ModelWithGradiend.from_pretrained(MN)
-    FN_model = ModelWithGradiend.from_pretrained(FN)
+    # MF_model = ModelWithGradiend.from_pretrained(MF)
+    # base_model = MF_model.base_model
+    # tokenizer = MF_model.tokenizer
+    # MN_model = ModelWithGradiend.from_pretrained(MN)
+    # FN_model = ModelWithGradiend.from_pretrained(FN)
 
-    layer_map = {
-        k: v
-        for k, v in base_model.named_parameters()
-        if "cls.prediction" not in k.lower()
-    }
-    layers = [layer for layer in layer_map]
+    # combined_enc_dec = CombinedEncoderDecoder(
+    #     grad_models=[MF_model, MN_model, FN_model],
+    #     num_encoders=3,
+    #     latent_dim=1,
+    #     merge=False,
+  
+    # )
+    # combined_model_with_grad = ModelWithGradiend(base_model, combined_enc_dec, tokenizer)
 
-    if isinstance(layers, dict):
-        input_dim = sum([v.sum() for v in layers.values()])
-    else:
-        input_dim = sum([layer_map[layer].numel() for layer in layers])
-
-    combined_enc_dec = CominedEncoderDecoder(
-        grad_models=[MF_model, MN_model, FN_model],
-        num_encoders=3,
-        input_dim=input_dim,
-        latent_dim=1,
-        layers=layers,
-    )
-    combined_model_with_grad = ModelWithGradiend(
-        base_model, combined_enc_dec, tokenizer
-    )
-
-    train(combined_model_with_grad, config=config, multi_task=False)
+    # train(combined_model_with_grad, config=config, multi_task=False)

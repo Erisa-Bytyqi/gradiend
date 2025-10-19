@@ -17,6 +17,7 @@ from scipy.spatial.distance import jensenshannon
 
 
 from gradiend.evaluation.encoder.de_encoder_analysis import DeEncoderAnalysis
+from gradiend.combined_models.combined_gradiends import CombinedEncoderDecoder
 from gradiend.model import ModelWithGradiend
 from gradiend.data import read_article_ds, read_geneutral, read_gender_data, get_gender_words, \
     write_default_predictions, read_default_predictions, json_dumps, json_loads, read_genter, read_namexact
@@ -1100,7 +1101,7 @@ def analyze_neurons_all_parts(model, parts=None, relative=False, q=99.99, boxplo
 
 
 
-def analyze_models(*models, config, max_size=None, force=True, shared=False, split='test', prefix=None, best_score=None, multi_task=False):
+def analyze_models(*models, config, max_size=None, force=True, split='test', prefix=None, best_score=None, multi_task=False, ensemble=False):
     if prefix:
         # find all models in the folder with the suffix
         best_score = '_best' if best_score else ''
@@ -1131,9 +1132,14 @@ def analyze_models(*models, config, max_size=None, force=True, shared=False, spl
         output = get_file_name(model, max_size=max_size, file_format='csv', split=split)
 
         if force or not os.path.isfile(output):
-            bert_with_ae = ModelWithGradiend.from_pretrained(model, shared=shared)
+            if ensemble: 
+                ae = CombinedEncoderDecoder.from_pretrained(model)
+                bert_with_ae = ModelWithGradiend.from_pretrained(model, ae=ae, ensemble=True)
+            else:
+
+                bert_with_ae = ModelWithGradiend.from_pretrained(model)
             model_analyser = DeEncoderAnalysis(config)
-            analyze_df = model_analyser.analyse_encoder(bert_with_ae,df,output=output, multi_task = multi_task, shared=shared)
+            analyze_df = model_analyser.analyse_encoder(bert_with_ae,df,output=output, multi_task = multi_task)
             #analyze_df = analyze_model(bert_with_ae, df, names_df, output=output, df_no_gender=df_no_gender)
             print(f'Done with Model {model}')
 

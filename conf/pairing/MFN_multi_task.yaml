@@ -16,8 +16,6 @@ categories:
     articles: [das]
     codes: [2]
     encoding: 0
-#combinations: [NM, NN, NF]  
-#combinations: [NM, NF, NN] 
 combinations: ['AM', 'AN', 'AF'] 
 articles: ['den', 'die', 'das'] 
 default_predictions: ['den', 'die', 'das', 'most_likely_token', 'label']  

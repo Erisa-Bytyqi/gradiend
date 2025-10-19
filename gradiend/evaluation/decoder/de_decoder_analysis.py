@@ -174,6 +174,7 @@ class DeDecoderAnalysis(DecoderAnalysis):
 
         return word, word_score_mean
 
+    #contains code from the Kauf et al. repo
     def evaluate_sentence(
         self,
         input,
@@ -275,16 +276,15 @@ class DeDecoderAnalysis(DecoderAnalysis):
             candidate_probabilities[sentence] = score
             cands_tokenized.append(tokenized)
 
-        return candidate_probabilities  # cands_tokenized
+        return candidate_probabilities  
 
     def preprocess(self, sentence, mask, det=True):
         if det:
             return sentence.replace("[ARTICLE]", mask)
         else:
-            sent = sentence.replace("[ADJECTIVE]", mask)
             return sentence.replace("[ADJECTIVE]", mask)
 
-    def evaluate_single_locus_grammaticality(self, df, top_k=None, batch_size=32):
+    def evaluate_single_locus_grammaticality(self, df, top_k=None, batch_size=32, method="kauf_l2r"): 
         vocab = {v: k for k, v in self.tokenizer.vocab.items()}
 
         mask = self.tokenizer.mask_token
@@ -298,17 +298,6 @@ class DeDecoderAnalysis(DecoderAnalysis):
 
         masked_texts_det = list(df["masked_det"])
         masked_texts_adj = list(df["masked_adj"])
-
-        # what i want from this
-        # - acc: overall: are gram sentences assigned a higher prob then ungram sentences.
-        # acc_d: for dets
-        # add_adj: fot adjs....
-        # sentence score: pll score of gram sents
-        # cf_sentnece score. pll score of ungram sents
-        # token score: pll score of a token
-        # cf_token score: pll score of a token
-        # token_p: prob of the factual token being picked
-        # cf_token_p: prob of the cf token being picked
 
         output_data = {key: [] for key in ["acc_d"]}
 
@@ -373,17 +362,18 @@ class DeDecoderAnalysis(DecoderAnalysis):
 
                 cf_candidate_det = (cf_sentence, counter_label_det)
                 cf_candidate_adj = (cf_sentence, counter_label_adj)
+                
 
                 candidate_score_prob = self.evaluate_sentence(
                     input=candidate_det,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=False,
                     base_two=False,
                     prob=True,
                 )[0][0]
                 cf_candidate_score_prob = self.evaluate_sentence(
                     input=cf_candidate_det,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=False,
                     base_two=False,
                     prob=True,
@@ -391,14 +381,14 @@ class DeDecoderAnalysis(DecoderAnalysis):
 
                 candidate_score_certainty = self.evaluate_sentence(
                     input=candidate_det,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=False,
                     base_two=False,
                     prob=False,
                 )[0][0]
                 cf_candidate_score_certainty = self.evaluate_sentence(
                     input=cf_candidate_det,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=False,
                     base_two=False,
                     prob=False,
@@ -407,14 +397,14 @@ class DeDecoderAnalysis(DecoderAnalysis):
                 # token scores for factual counterfactual DETERMINERS
                 candidate_det_score = self.evaluate_sentence(
                     input=candidate_det,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=True,
                     base_two=False,
                     prob=True,
                 )[1]
                 cf_candidate_det_score = self.evaluate_sentence(
                     input=cf_candidate_det,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=True,
                     base_two=False,
                     prob=True,
@@ -422,14 +412,14 @@ class DeDecoderAnalysis(DecoderAnalysis):
 
                 candidate_det_certainty = self.evaluate_sentence(
                     input=candidate_det,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=True,
                     base_two=False,
                     prob=False,
                 )[1]
                 cf_candidate_det_certainty = self.evaluate_sentence(
                     input=cf_candidate_det,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=True,
                     base_two=False,
                     prob=False,
@@ -438,14 +428,14 @@ class DeDecoderAnalysis(DecoderAnalysis):
                 # token scores for factual counterfactual ADJECTIVES
                 candidate_adj_score = self.evaluate_sentence(
                     input=candidate_adj,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=True,
                     base_two=False,
                     prob=True,
                 )[1]
                 cf_candidate_adj_score = self.evaluate_sentence(
                     input=cf_candidate_adj,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=True,
                     base_two=False,
                     prob=True,
@@ -453,14 +443,14 @@ class DeDecoderAnalysis(DecoderAnalysis):
 
                 candidate_adj_certainty = self.evaluate_sentence(
                     input=candidate_adj,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=True,
                     base_two=False,
                     prob=False,
                 )[1]
                 cf_candidate_adj_certainty = self.evaluate_sentence(
                     input=cf_candidate_adj,
-                    method="kauf_l2r",
+                    method=method,
                     per_token=True,
                     base_two=False,
                     prob=False,
@@ -714,9 +704,12 @@ def compute_metrics(output_data):
     }
 
 
+from minicons import scorer
 if __name__ == "__main__":
     default_evaluation_gender_factors = [-1]
     default_evaluation_lrs = [-5e-2]
+
+    model_scorer = scorer.MaskedLMScorer('bert-base-german-cased', 'gpu' if torch.cuda.is_available() else 'cpu')
 
     # distilbert_model_path = "results/experiments/gradiend/MF/3e-05/distilbert-base-german-cased/1"
     # pairs = {(gender_factor, lr) for gender_factor in default_evaluation_gender_factors for lr in default_evaluation_lrs}

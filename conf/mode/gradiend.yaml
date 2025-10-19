@@ -9,4 +9,6 @@ model_config:
   eval_max_size: 0.1
   seed: 42
   num_dims: 1
+  batch_size: 32
+  accumulation_steps: 1
   

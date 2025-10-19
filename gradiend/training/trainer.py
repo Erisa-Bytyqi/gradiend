@@ -123,6 +123,7 @@ def train(model_with_gradiend,
           multi_task= False,
           shared = False,
           num_dims = 1,
+          accumulation_steps = 1,
           output='results/models/gradiend',
           checkpoints=False,
           max_iterations=None,
@@ -146,6 +147,7 @@ def train(model_with_gradiend,
           normalized=True,
           use_cached_gradients=False,
           torch_dtype=torch.float32,
+          ensemble=False,
           ):
 
     print('Training GRADIEND model')
@@ -184,92 +186,85 @@ def train(model_with_gradiend,
             model_with_gradiend, config=config, split='val', source=source, max_size=eval_max_size, is_generative=is_generative, multi_task=multi_task)
 
         def _evaluate(data):
-            start = time.time()
-            # even if other source is chosen, the correct gradients are loaded into eval_data
-            gradients = data['gradients']
-            labels = data['labels']
+            with torch.no_grad():
+                start = time.time()
+                # even if other source is chosen, the correct gradients are loaded into eval_data
+                gradients = data['gradients']
+                labels = data['labels']
 
-            device = model_with_gradiend.gradiend.device_encoder
-            encoded = []
+                device = model_with_gradiend.gradiend.device_encoder
+                encoded = []
 
-            grads = list(gradients.values())
+                grads = list(gradients.values())
 
-            if eval_batch_size > 1:
-                for i in range(0, len(grads), eval_batch_size):
-                    batch = grads[i:min(i + eval_batch_size, len(grads))]
-                    batch_on_device = [g.to(device, dtype=torch_dtype) for g in batch]
-
-                    if shared: 
-                        batch = torch.stack(batch_on_device)
-                        encoder_outputs = [encoder(batch) for encoder in model_with_gradiend.gradiend.encoder]
-                        encoded_values = torch.cat(encoder_outputs, dim=1)
-                    else:
+                if eval_batch_size > 1:
+                    for i in range(0, len(grads), eval_batch_size):
+                        batch = grads[i:min(i + eval_batch_size, len(grads))]
+                        batch_on_device = [g.to(device, dtype=torch_dtype) for g in batch]
+                        
                         encoded_values = model_with_gradiend.gradiend.encoder(torch.stack(batch_on_device))
-                    
-                    #for one dim
-                    #encoded.extend(encoded_values.view(-1).tolist())
-                    encoded.extend(encoded_values.tolist())
 
-                    # free memory on device
-                    del batch_on_device
-                    torch.cuda.empty_cache()  # if using GPU, it helps clear memory
-            else:
-                for grads in gradients.values():
-                    encoded_value = model_with_gradiend.gradiend.encoder(grads.to(device, dtype=torch_dtype))
-                    encoded.append(encoded_value)
+                        encoded.extend(encoded_values.detach().cpu().numpy().tolist())
+
+                        # free memory on device
+                        del batch_on_device
+                        torch.cuda.empty_cache()  # if using GPU, it helps clear memory
+                else:
+                    for grads in gradients.values():
+                       
+                        encoded_value = model_with_gradiend.gradiend.encoder(grads.to(device, dtype=torch_dtype))
+
+                        encoded.append(encoded_value.detach().cpu().numpy().tolist())
+                
             
-           
-            #TODO move with config
-            score_labels = {k: 1 if v in [0, 1, 2, 3] else 0 if v in [4,5,6,7] else 2 for k, v in labels.items()}
+                #TODO move with config
+                score_labels = {k: 1 if v in [0, 1, 2, 3] else 0 if v in [4,5,6,7] else 2 for k, v in labels.items()}
 
-            if num_dims > 1: 
-                encoded = [np.mean(e)[0] for e in encoded]
-            else:
-                encoded = [e[0] for e in encoded]
-            
-            score = -pearsonr(list(score_labels.values()), encoded).correlation
+                if num_dims > 1:
+                    if ensemble: 
+                        encoded = np.array(encoded).mean(axis=1) 
+                    else:
+                        encoded = [np.mean(e)[0] for e in encoded]
+                else:
+                    encoded = [e[0] for e in encoded]
+                
+                score = -pearsonr(list(score_labels.values()), encoded).correlation
 
-    
-            gender_keys = list(config['categories'].keys())
-            category_to_invert = max(config['categories'],key=lambda cat: config['categories'][cat]['encoding'])
+        
+                gender_keys = list(config['categories'].keys())
+                category_to_invert = max(config['categories'],key=lambda cat: config['categories'][cat]['encoding'])
 
-            #category_to_invert = max(config['categories'], key=lambda gender_key: max(config['categories'][gender_key]['encoding']))
-            log.info(f"Category to invert: {category_to_invert}")
-            category_means = {}
+                log.info(f"Category to invert: {category_to_invert}")
+                category_means = {}
 
-            for gender_key in gender_keys:
-                codes = config['categories'][gender_key]['codes']
-                label_means = [np.mean([e for e, label in zip(encoded, labels.values()) if label == code]) for code in codes]
-                category_means[gender_key] = np.mean(label_means)
-
-      
-              
-            #TODO this (what should be negative and positive) is currently decided on which article comes first in the config
-            if normalized and invert(category_to_invert, category_means) and num_dims == 1:
-                log.info(f"Invert encoding since {category_to_invert} encoded value is {category_means[category_to_invert]:.6f}")
-                #print(f'Invert encoding since female encoded value is {mean_second_encoded_value} <-0.1 and male encoded value is {mean_fist_encoded_value}>0.1')
-                model_with_gradiend.invert_encoding()
-                score = -score
                 for gender_key in gender_keys:
-                    category_means[gender_key] = - category_means[gender_key]
-                    
-                # mean_fist_encoded_value = -mean_fist_encoded_value
-                # mean_second_encoded_value = -mean_second_encoded_value
+                    codes = config['categories'][gender_key]['codes']
+                    label_means = [np.mean([e for e, label in zip(encoded, labels.values()) if label == code]) for code in codes]
+                    category_means[gender_key] = np.mean(label_means)
 
-            if np.isnan(score):
-                score = 0.0
+        
+                
+                #TODO this (what should be negative and positive) is currently decided on which article comes first in the config
+                if normalized and invert(category_to_invert, category_means) and num_dims == 1:
+                    log.info(f"Invert encoding since {category_to_invert} encoded value is {category_means[category_to_invert]:.6f}")
+                    model_with_gradiend.invert_encoding()
+                    score = -score
+                    for gender_key in gender_keys:
+                        category_means[gender_key] = - category_means[gender_key]
+                        
+                
+                if np.isnan(score):
+                    score = 0.0
 
-            end = time.time()
+                end = time.time()
 
-    
-
-            log.info(f"Encoded means: {category_means}")
-            print(f'Evaluated in {(end - start):.2f}s')
-            for gender_key, mean_value in category_means.items():
-                print(f"Mean encoded value for {gender_key}: {mean_value:6f}")
+                log.info(f"Encoded means: {category_means}")
+                print(f'Evaluated in {(end - start):.2f}s')
+                for gender_key, mean_value in category_means.items():
+                    print(f"Mean encoded value for {gender_key}: {mean_value:6f}")
 
 
-            return score, *tuple(category_means.values())
+                return score, *tuple(category_means.values())
 
 
 
@@ -327,6 +322,7 @@ def train(model_with_gradiend,
     len_dataloader = len(dataloader)
     for epoch in range(epochs):
         dataloader_iterator = tqdm(dataloader, desc=f'Epoch {epoch + 1}/{epochs}', leave=False)
+         
 
         for i, batch in enumerate(dataloader_iterator):
 
@@ -415,77 +411,82 @@ def train(model_with_gradiend,
             #         t if t.device == model_with_gradiend.gradiend.device_encoder else t.to(model_with_gradiend.gradiend.device_encoder)
             #         for t in source_tensor]
             # else:
-            #     if source_tensor.device != model_with_gradiend.gradiend.device_encoder:
-            #         source_tensor = source_tensor.to(model_with_gradiend.gradiend.device_encoder)
+            if source_tensor.device != model_with_gradiend.gradiend.device_encoder:
+                source_tensor = source_tensor.to(model_with_gradiend.gradiend.device_encoder)
             
-           
-            if multi_task and source == 'inv_gradient': 
-                all_outputs = []
-                all_encoded_values = []
-                for tensor in source_tensor: 
-                    outputs_ae, encoded_value = model_with_gradiend.gradiend(tensor, return_encoded=True)
-                    all_outputs.append(outputs_ae)
-                    all_encoded_values.append(encoded_value)
-            else:
-                outputs_ae, encoded_value = model_with_gradiend.gradiend(source_tensor, return_encoded=True)
+            with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA], record_shapes=True) as prof:
+                if multi_task and source == 'inv_gradient': 
+                    all_outputs = []
+                    all_encoded_values = []
+                    for tensor in source_tensor: 
+                        outputs_ae, encoded_value = model_with_gradiend.gradiend(tensor, return_encoded=True)
+                        all_outputs.append(outputs_ae)
+                        all_encoded_values.append(encoded_value)
+                else:
+                    outputs_ae, encoded_value = model_with_gradiend.gradiend(source_tensor, return_encoded=True)
 
-            del source_tensor
+                del source_tensor
 
-            # calculate loss
-            if target_tensor.device != outputs_ae.device:
-                target_tensor = target_tensor.to(outputs_ae.device)
+                # calculate loss
+                if target_tensor.device != outputs_ae.device:
+                    target_tensor = target_tensor.to(outputs_ae.device)
 
-            if multi_task:
-                target_tensors = [
-                    t if t.device == outputs_ae.device else t.to(outputs_ae.device)
-                    for t in target_tensors 
-                    ]
-                # target_tensors = [t.to(outputs_ae.device) for t in target_tensors]
-
-            # release memory
-            torch.cuda.empty_cache()
-            gc.collect()
-
-
-            if isinstance(criterion_ae, PolarFeatureLoss):
-                loss_ae = criterion_ae(outputs_ae, target_tensor, encoded_value)
-            else:
                 if multi_task:
-                    if source == 'gradient': 
-                        task_losses = []
-                        for grad_target in target_tensors: 
-                            task_loss_ae = criterion_ae(outputs_ae, grad_target)
-                            task_losses.append(task_loss_ae)
+                    target_tensors = [
+                        t if t.device == outputs_ae.device else t.to(outputs_ae.device)
+                        for t in target_tensors 
+                        ]
+                    # target_tensors = [t.to(outputs_ae.device) for t in target_tensors]
 
-                        loss_ae = torch.stack(task_losses).mean()
-                        # optimizer_ae.pc_backward(task_losses)
-                    elif source == 'inv_gradient': 
-                        task_losses = []
-                        for grad_output_ae, grad_target in zip(all_outputs, target_tensors):
-                            task_loss_ae = criterion_ae(grad_output_ae, grad_target)
-                            task_losses.append(task_loss_ae)
-
-                        loss_ae = torch.stack(task_losses).mean() 
-                        # optimizer_ae.pc_backward(task_losses)
-                ## TODO extend for source inv grad 
-                else:     
-                    loss_ae = criterion_ae(outputs_ae, target_tensor)
-            del target_tensor
-
-            optimizer_ae.zero_grad()
-            loss_ae.backward()
+                # release memory
+                torch.cuda.empty_cache()
+                gc.collect()
 
 
-            #plot_grad_flow(model_with_gradiend.gradiend.named_parameters())
+                if isinstance(criterion_ae, PolarFeatureLoss):
+                    loss_ae = criterion_ae(outputs_ae, target_tensor, encoded_value)
+                else:
+                    if multi_task:
+                        if source == 'gradient': 
+                            task_losses = []
+                            for grad_target in target_tensors: 
+                                task_loss_ae = criterion_ae(outputs_ae, grad_target)
+                                task_losses.append(task_loss_ae)
 
-            #gc.collect()  # Run Python garbage collection
-            #torch.cuda.empty_cache()  # Release unused memory back to CUDA driver
-            optimizer_ae.step()
+                            loss_ae = torch.stack(task_losses).mean()
+                            # optimizer_ae.pc_backward(task_losses)
+                        elif source == 'inv_gradient': 
+                            task_losses = []
+                            for grad_output_ae, grad_target in zip(all_outputs, target_tensors):
+                                task_loss_ae = criterion_ae(grad_output_ae, grad_target)
+                                task_losses.append(task_loss_ae)
+
+                            loss_ae = torch.stack(task_losses).mean() 
+                            # optimizer_ae.pc_backward(task_losses)
+                    else:     
+                        loss_ae = criterion_ae(outputs_ae, target_tensor)
+                del target_tensor
+                
+
+                loss_ae = loss_ae / accumulation_steps
+
+                loss_ae.backward()
+                
+
+        
+                if (i + 1) % accumulation_steps == 0  or (i + 1 == len(dataloader)):
+                    optimizer_ae.step()
+                    optimizer_ae.zero_grad()
+                    
+                    # gc.collect()  # Run Python garbage collection
+                    # torch.cuda.empty_cache()  # Release unused memory back to CUDA driver
+            
+            print(prof.key_averages().table(sort_by="self_cuda_memory_usage", row_limit=20))
 
             loss_ae = loss_ae.item()
             training_gradiend_time += time.time() - gradiend_start
-            
 
+       
             if len(last_losses) < max_losses:
                 last_losses.append(loss_ae)
             else:
@@ -552,6 +553,7 @@ def train(model_with_gradiend,
                         'max_iterations': max_iterations,
                         'convergence': convergence,
                         'batch_size': batch_size,
+                        'accumulation_steps': accumulation_steps,
                         'batch_size_data': batch_size_data,
                         'criterion_ae': str(criterion_ae),
                         'activation': str(model_with_gradiend.gradiend.activation),

@@ -594,7 +594,6 @@ class DeEncoderAnalysis(EncoderAnalysis):
         except KeyError:
             df = df_all
 
-        # dim-wise pearson, TODO: change this with a LabelEncoder maybe...
 
         df["state_value"] = df["state_value"].apply(
             lambda x: 1 if x in [0, 1, 2, 3] else 0 if x in [4, 5, 6, 7] else 2
@@ -618,12 +617,13 @@ class DeEncoderAnalysis(EncoderAnalysis):
             anova_results[f"dim_{dim}"] = {"F": f_val, "p": p_val}
         results["anova_per_dimension"] = anova_results
 
-        y_reshaped = y.reshape(-1, 1)
-        caa = CCA(n_components=1)
-        X_caa, y_caa = caa.fit_transform(X, y_reshaped)
+        #wrong...
+        # y_reshaped = y.reshape(-1, 1)
+        # caa = CCA(n_components=1)
+        # X_caa, y_caa = caa.fit_transform(X, y_reshaped)
 
-        canonical_corr = np.corrcoef(X_caa[:, 0], y_caa.flatten())[0, 1]
-        results["cca_correlation"] = canonical_corr
+        # canonical_corr = np.corrcoef(X_caa[:, 0], y_caa.flatten())[0, 1]
+        # results["cca_correlation"] = canonical_corr
 
         with open(json_file, "w") as f:
             json.dump(

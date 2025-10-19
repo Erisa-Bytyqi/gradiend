@@ -17,7 +17,6 @@ from gradiend.data.util import (
 )
 
 
-# TODO potentially move metric functions to own file
 def z_score(x, groupby=None, key=None):
     if isinstance(x, pd.DataFrame):
         assert key is not None

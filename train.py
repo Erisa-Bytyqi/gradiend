@@ -7,6 +7,8 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf
 import logging
 from pathlib import Path
+from pickle import dump
+
 
 from gradiend.evaluation.analyze_encoder import analyze_models
 from gradiend.evaluation.encoder.de_encoder_analysis import DeEncoderAnalysis
@@ -51,6 +53,12 @@ def train_gradined(cfg: DictConfig):
         version = ''
     else:
         version = f'/v{version}'
+
+    # if torch.cuda.is_available():
+    #     log.info("CUDA is available, starting memory snapshot...")
+
+    # torch.cuda.memory._record_memory_history(enabled='all')
+
 
     for i in range(cfg.num_runs): 
         log.info(f"Run {i} for GRADIEND")
@@ -107,6 +115,17 @@ def train_gradined(cfg: DictConfig):
             print(f'Average time per model: {np.mean(times)}')
         else:
             print('All models were already trained before!')
+
+    #     if torch.cuda.is_available():
+    #         s = torch.cuda.memory._snapshot()
+    #         with open("snapshot.pickle", "wb") as f:
+    #             dump(s, f)
+    #         torch.cuda.memory._record_memory_history(enabled=None)
+    #     else:
+    #         log.info("CUDA not available, skipping memory snapshot.")
+
+    # # tell CUDA to stop recording memory allocations now
+    # torch.cuda.memory._record_memory_history(enabled=None)
 
     return output
 

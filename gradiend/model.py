@@ -393,7 +393,7 @@ class GradiendModel(nn.Module):
         self.tokenizer = tokenizer
 
     def forward(self, x, return_encoded=False):
-        from gradiend.combined_models.combined_gradiends import CominedEncoderDecoder
+        from gradiend.combined_models.combined_gradiends import CombinedEncoderDecoder
         orig_shapes = {}
 
         if hasattr(x, 'named_parameters'):
@@ -431,7 +431,8 @@ class GradiendModel(nn.Module):
                     orig_shapes[layer] = param.shape
             x = torch.concat(grads)
         
-        if isinstance(self, CominedEncoderDecoder) and self.shared: 
+        # if isinstance(self, CombinedEncoderDecoder) and self.shared: 
+        if self.shared: 
             latents = [enc(x) for enc in self.encoder]
             encoded = torch.cat(latents, dim=0)
             #encoded = self.encoder(x)
@@ -512,6 +513,7 @@ class GradiendModel(nn.Module):
         }
         if isinstance(self.layers, dict):
             config['layers_path'] = 'layers.pth'
+
 
         with open(config_path, 'w') as f:
             json.dump(config, f)
@@ -659,13 +661,12 @@ def is_generative(model):
 class ModelWithGradiend(nn.Module):
 
     def __init__(self, base_model, gradiend, tokenizer, base_model_device=None):
-        from gradiend.combined_models.combined_gradiends import StackedGradiend
+  
         super().__init__()
         self.base_model = base_model
         self.gradiend = gradiend
         self.tokenizer = tokenizer
-        if not isinstance(gradiend, StackedGradiend):
-            self.grad_iterations = gradiend.grad_iterations
+        self.grad_iterations = gradiend.grad_iterations
 
         self.base_model_device = base_model_device or torch.device('cuda') # todo cuda:1
         self.base_model.to(self.base_model_device)
@@ -722,19 +723,18 @@ class ModelWithGradiend(nn.Module):
         return gradients
 
     # do i even need this if i change the name....
-    def encode(self, text, label, shared=True):
-        from gradiend.combined_models.combined_gradiends import  CominedEncoderDecoder
+    def encode(self, text, label):
         gradients = self.create_gradients(text, label)
-        if isinstance(self.gradiend, CominedEncoderDecoder): 
-            encoded = self.gradiend.encode(gradients, shared=shared)
-        else:
-            encoded = self.gradiend.encoder(gradients)
+        # if isinstance(self.gradiend, CombinedEncoderDecoder): 
+        #     encoded = self.gradiend.encode(gradients, shared=shared)
+        # else:
+        encoded = self.gradiend.encoder(gradients)
         return encoded
 
 
 
     def modify_model(self, lr, gender_factor, part='decoder', top_k=None, top_k_part=None):
-        from gradiend.combined_models.combined_gradiends import StackedGradiend, CominedEncoderDecoder
+        from gradiend.combined_models.combined_gradiends import StackedGradiend, CombinedEncoderDecoder
         # returns a base_model model with enhanced weights based on the auto encoder, use the learning rate parameter to control the influence of the auto encoder
         top_k_part = top_k_part or part
 
@@ -749,7 +749,7 @@ class ModelWithGradiend(nn.Module):
         if part == 'decoder':
             if isinstance(self.gradiend, StackedGradiend):
                 enhancer1, enhancer2, enhancer3 = self.gradiend.modify_model_decode_v1(gender_factor)
-            elif isinstance(self.gradiend, CominedEncoderDecoder): 
+            elif isinstance(self.gradiend, CombinedEncoderDecoder): 
                 enhancer = self.gradiend.modified_decode(x = gender_factor, method='sum')
             else:
                 enhancer = self.gradiend.decoder(torch.tensor([gender_factor], dtype=torch.float, device=model_device))
@@ -1020,7 +1020,6 @@ class ModelWithGradiend(nn.Module):
 
                 # Get most likely next token
                 next_token_ids = selected_logits.argmax(dim=-1)  # shape: (batch_size,)
-                next_tokens = self.tokenizer.batch_decode(next_token_ids)
                 #print('Next Tokens', next_tokens)
 
             loss_bert = outputs.loss
@@ -1045,8 +1044,8 @@ class ModelWithGradiend(nn.Module):
         self.gradiend.save_pretrained(save_directory, bert=self.base_model.name_or_path, tokenizer=self.tokenizer.name_or_path, **kwargs)
 
     @classmethod
-    def from_pretrained(cls, load_directory, layers=None, latent_dim=1, torch_dtype=torch.float32, shared=False, device=None, **kwargs):
-        from gradiend.combined_models.combined_gradiends import  CominedEncoderDecoder
+    def from_pretrained(cls, load_directory, ae=None, layers=None, latent_dim=1, torch_dtype=torch.float32, ensemble=False, device=None, **kwargs):
+        from gradiend.combined_models.combined_gradiends import  CombinedEncoderDecoder
         layers = layers or []
         if len(layers) == 1 and isinstance(layers[0], list):
             layers = layers[0]
@@ -1063,17 +1062,16 @@ class ModelWithGradiend(nn.Module):
             device_decoder = torch.device("cuda:0")
 
         try:
-            if shared: 
-                ae = CominedEncoderDecoder.from_pretrained(load_path=load_directory, device=device_encoder)
-            else:
+            if not ensemble: 
                 ae = GradiendModel.from_pretrained(load_directory, device_encoder=device_encoder, device_decoder=device_decoder)
 
+          
             if layers and ae.layers != layers:
                 raise ValueError(f'The provided layers {layers} do not match the layers in the model configuration {ae.layers}')
             else:
                 layers = ae.layers
 
-            if shared: 
+            if ensemble: 
                 base_model_id = ae.kwargs['bert']
                 tokenizer = ae.kwargs['tokenizer']
             else:
